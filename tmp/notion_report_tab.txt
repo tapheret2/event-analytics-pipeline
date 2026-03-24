@@ -1,0 +1,53 @@
+# Notion Task System (API-driven) — Report
+
+## 1. Executive Summary
+This module provides an API-first personal task management system in Notion. The intent is to reduce operational overhead (manual tracking, scattered notes) and provide a single source of truth for work items, deadlines, and prioritization.
+
+## 2. Scope
+In scope:
+- Create/update tasks programmatically via Notion API.
+- Standardize task metadata (Status, Priority, Deadline, Category, People).
+- Provide deterministic “Today / This Week / Overdue” views via database query rules.
+
+Out of scope:
+- Browser/UI automation for Notion (fragile, session-dependent).
+- Complex multi-workspace synchronization.
+
+## 3. Data Model / Schema
+Database: "To do"
+Required properties:
+- Task (title)
+- Description (rich_text)
+- Deadline (date)
+- Status (status)
+- Priority (select)
+- Category (select)
+- People (people)
+
+Schema principles:
+- Stable English property keys (avoid encoding/diacritics issues in API tooling).
+- Predictable option values for Status/Priority to enable automation.
+
+## 4. Mechanism / Workflow
+1) Intake: user request arrives via chat.
+2) Parsing: request is normalized into fields (title, deadline, priority, category).
+3) Upsert: create new task or update existing task when a match is unambiguous.
+4) Reporting: return task URL and applied properties.
+
+## 5. Controls / Reliability
+- Idempotency: prefer deterministic matching (exact title + same day window) to avoid duplicates.
+- Change logging: record task creation and major edits (what changed, when).
+- Safe defaults: if deadline/priority not provided, do not guess beyond a conservative default.
+
+## 6. Evidence
+- Primary database_id: 31e4c265832d8011bc64e832d0cff957
+- Demonstrated: create/archival of test tasks and creation of production tasks.
+
+## 7. Operational Notes
+- Failure mode: Notion API returns 404 when integration is not shared on the DB/page.
+- Mitigation: enforce “Share → Invite integration” checklist.
+
+## 8. Next Steps
+- Add a weekly review routine (summarize overdue + upcoming deadlines).
+- Add reminders via calendar or Telegram (opt-in only).
+- Add a small command grammar: Add / Done / List today.

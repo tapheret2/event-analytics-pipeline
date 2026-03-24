@@ -2,39 +2,21 @@
 
 Skills define _how_ tools work. This file is for _your_ specifics — the stuff that's unique to your setup.
 
-## What Goes Here
+## Local installs / paths
 
-Things like:
+### gogcli (gog)
+- Binary: `C:\Users\ADMIN\.openclaw\workspace\bin\gog.exe`
+- Version observed: `v0.12.0`
+- Credentials stored at: `C:\Users\ADMIN\AppData\Roaming\gogcli\credentials.json`
+- Tip: set `GOG_ACCOUNT=<email>` to avoid repeating `--account`.
 
-- Camera names and locations
-- SSH hosts and aliases
-- Preferred voices for TTS
-- Speaker/room names
-- Device nicknames
-- Anything environment-specific
-
-## Examples
-
-```markdown
-### Cameras
-
-- living-room → Main area, 180° wide angle
-- front-door → Entrance, motion-triggered
-
-### SSH
-
-- home-server → 192.168.1.100, user: admin
-
-### TTS
-
-- Preferred voice: "Nova" (warm, slightly British)
-- Default speaker: Kitchen HomePod
-```
+### Notion (API)
+- Use Notion REST API with `Notion-Version: 2022-06-28`.
+- Primary database (Phát):
+  - Name: `To do`
+  - database_id: `31e4c265832d8011bc64e832d0cff957`
+  - Expected properties: `Task`, `Description`, `Deadline`, `Status`, `Priority`, `People`, `Category`.
 
 ## Why Separate?
 
 Skills are shared. Your setup is yours. Keeping them apart means you can update skills without losing your notes, and share skills without leaking your infrastructure.
-
----
-
-Add whatever helps you do your job. This is your cheat sheet.

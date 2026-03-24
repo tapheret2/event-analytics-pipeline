@@ -1,0 +1,6 @@
+﻿{
+    "number":  39,
+    "title":  "[BUG] Rate limiting missing on /tasks endpoint leads to spam/DoS",
+    "url":  "https://github.com/Peganyx/test-agent/issues/39",
+    "body":  "## Problem\nThe /tasks endpoint can be hit repeatedly without any rate limiting or throttling.\nThis enables request spam / DoS and can also flood the task storage.\n\n## Expected behavior\nAdd basic rate limiting to protect the endpoint.\n\n## Proposed scope\n- Implement a simple in-memory rate limiter (per-IP) as middleware.\n- Default: 60 requests/min per client IP.\n- Return HTTP 429 with a clear message when exceeded.\n\n## Acceptance criteria\n- When a client exceeds the limit, response is 429.\n- Normal usage remains unaffected.\n- Add tests for the limiter.\n"
+}

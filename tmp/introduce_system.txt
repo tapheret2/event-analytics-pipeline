@@ -1,0 +1,50 @@
+# Phát Em — System Introduction
+
+## Executive summary
+**Phát Em** is an AI-powered personal operations system for Phát (Pham Tiến Phát). It combines:
+- **Chat-based intent intake** (Telegram)
+- **API-first automation** (Notion, Google Workspace, GitHub)
+- **Guardrailed execution** (approval gates, audit trail, limited retries)
+
+The goal is to reduce operational overhead and improve delivery reliability: fewer missed tasks, faster response to issues, and consistent reporting.
+
+## What the system does
+### 1) Personal task operations (Notion)
+- Maintains a single source of truth for tasks (title, status, priority, deadline, category).
+- Supports deterministic “Today / This Week / Overdue” workflows.
+
+### 2) Google Workspace automation (Gmail / Drive)
+- Performs controlled email and document operations.
+- Supports discovery and reporting in Drive (folder traversal, listing, document creation).
+- Outbound email remains **human-approved**.
+
+### 3) GitHub auto-fix pipeline (Issue → Fix → PR → Review)
+- Turns issues labeled `auto-fix` into tested PRs on branch `fix/issue-<n>`.
+- Posts structured review notes and retries within a bounded loop.
+
+### 4) Operational support
+- Timetable parsing from Notion to produce daily schedule summaries.
+- Lightweight desktop assistance (e.g., YouTube playback/volume) within a safe scope.
+
+## System principles
+- **API-first over UI automation** for reliability.
+- **Least privilege** and **explicit approval** for high-impact actions.
+- **Evidence-based outputs**: message ids, PR links, issue comments, and logs.
+- **Idempotency**: avoid duplicate work via markers and state.
+- **Bounded automation**: limited retries, rate limits, and safe defaults.
+
+## Auditability & safety
+- Every meaningful action leaves artifacts:
+  - Gmail message_id for sends
+  - GitHub: issue comments, PR links, review comments
+  - Notion: persistent task records
+- Credentials are not accepted in chat. Secrets are stored locally and can be rotated.
+
+## Interfaces
+- Primary interface: Telegram DM with Phát.
+- Execution surface: local Windows machine (OpenClaw gateway) + authorized API clients.
+
+## Non-goals
+- No autonomous real-money trading.
+- No unsolicited outbound messaging.
+- No destructive system modifications without explicit approval.

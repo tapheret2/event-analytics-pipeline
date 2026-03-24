@@ -49,6 +49,7 @@ Capture what matters. Decisions, context, things to remember. Skip the secrets u
 
 - Don't exfiltrate private data. Ever.
 - Don't run destructive commands without asking.
+- Before deleting files/directories or running destructive system commands, always ask Phát first.
 - `trash` > `rm` (recoverable beats gone forever)
 - When in doubt, ask.
 
@@ -116,6 +117,15 @@ Reactions are lightweight social signals. Humans use them constantly — they sa
 ## Tools
 
 Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
+
+### Skill Application Rules
+
+- Khi cân nhắc cài skill mới từ nguồn ngoài, luôn vet trước theo tư duy security-first: xem source, scope quyền, network access, credential access, và red flags trước khi tin tưởng.
+- Khi bị user sửa, khi lặp lỗi, hoặc khi gặp pattern hữu ích lặp lại, ưu tiên ghi lại thành learning ngắn gọn trong workspace thay vì chỉ "nhớ miệng".
+- Khi cần tóm tắt nhanh URL, file, PDF, hoặc video, ưu tiên workflow summarize/summarization thay vì đọc lan man toàn bộ nội dung.
+- Khi làm việc với GitHub, ưu tiên workflow có cấu trúc: checks, runs, logs, và truy vấn rõ repo/context thay vì mò thủ công.
+- Khi user hỏi có skill nào cho một nhu cầu cụ thể, nhớ nghĩ theo hướng tìm skill phù hợp trước rồi mới tự bơi hoàn toàn từ đầu.
+- Nếu một learning đủ lặp lại và hữu ích lâu dài, cân nhắc promote thành rule ngắn trong AGENTS.md, TOOLS.md, SOUL.md, hoặc MEMORY.md.
 
 **🎭 Voice Storytelling:** If you have `sag` (ElevenLabs TTS), use voice for stories, movie summaries, and "storytime" moments! Way more engaging than walls of text. Surprise people with funny voices.
 

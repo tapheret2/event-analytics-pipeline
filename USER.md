@@ -6,11 +6,11 @@ _Learn about the person you're helping. Update this as you go._
 - **What to call them:** Phát
 - **Pronouns:** _(optional)_
 - **Timezone:** Asia/Bangkok
-- **Notes:** Sinh viên năm 2 ngành Khoa học Dữ liệu ở HCMUS; đang intern Software Engineer; dự định sau khi ra trường làm Software Engineer; hiện có khoảng đầu tư crypto khoảng 700 USD.
+- **Notes:** Sinh viên năm 2 ngành Khoa học Dữ liệu ở HCMUS; định hướng theo hướng **Data Engineer (DE)**; hiện có khoảng đầu tư crypto khoảng 700 USD.
 
 ## Context
 
-- Quan tâm tới học tập, thực tập, định hướng nghề nghiệp theo hướng Software Engineer.
+- Quan tâm tới học tập, thực tập, định hướng nghề nghiệp theo hướng **Data Engineer (DE)**.
 - Có theo dõi và đầu tư crypto ở mức khoảng 700 USD.
 - Tên hiển thị trong chat là Tap, nhưng tên đầy đủ là Phạm Tiến Phát.
 

@@ -1,0 +1,10 @@
+event_time,user_id,event_name,country,device,revenue
+2026-03-20 08:10:00,1,page_view,VN,web,
+2026-03-20 08:12:00,1,add_to_cart,VN,web,
+2026-03-20 08:13:00,1,purchase,VN,web,19.99
+2026-03-20 09:05:00,2,page_view,US,ios,
+2026-03-20 09:07:00,2,purchase,US,ios,4.99
+2026-03-21 10:10:00,1,page_view,VN,android,
+2026-03-21 10:12:00,3,page_view,TH,web,
+2026-03-21 10:15:00,3,purchase,TH,web,29.99
+2026-03-22 12:00:00,,page_view,SG,web,

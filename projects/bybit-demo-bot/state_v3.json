@@ -1,0 +1,9 @@
+{
+  "day": "2026-03-24",
+  "day_start_equity": 100570.29500932,
+  "peak_equity": 100613.04980932,
+  "consecutive_losses": 0,
+  "last_candle_close_ms": 1774279800000,
+  "entry_atr": 476.42496432110926,
+  "trail_level": 0
+}

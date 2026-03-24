@@ -1,0 +1,1 @@
+﻿@{FullName=C:\Users\ADMIN\.openclaw\workspace\bin\signal-cli\signal-cli-0.14.1\lib\signal-cli-0.14.1.jar}

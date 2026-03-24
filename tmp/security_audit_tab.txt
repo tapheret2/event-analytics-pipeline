@@ -1,0 +1,43 @@
+# Operating Model — Security, Auditability, and Controls
+
+## 1. Security Posture (Baseline)
+- **Default stance:** least privilege + explicit approval for risky actions.
+- **Channel exposure:** Telegram DM set to pairing/allowlist; group access disabled unless explicitly required.
+- **Secrets handling:** credentials are never accepted in chat; stored locally in environment files with OS-level access controls.
+
+## 2. Roles & Responsibilities
+- **Human (Phát):** final authority for outbound comms, credential issuance, and any action that impacts production data.
+- **Agent (Phát Em):** executes automation steps, produces artifacts (PRs, docs, reports), and provides transparent logs.
+
+## 3. Approval Gates
+High-risk actions require explicit human confirmation:
+- Sending email to new recipients
+- Creating calendar events
+- Modifying repository settings or merging to main
+- Any destructive system action (delete/trash, service changes)
+
+## 4. Audit Trail / Observability
+- **Email:** store Gmail message_id per send for traceability.
+- **GitHub:** every automation run leaves evidence in:
+  - issue comments (started/final)
+  - PR link and review comment
+  - branch naming convention `fix/issue-<n>`
+- **Local logs:** maintain a small state file:
+  - `workspace/autofix_state.json` (processed issues, run ids, retry counters)
+
+## 5. Failure Modes & Mitigations
+- **Prompt injection (messaging):** mitigate via pairing/allowlist and tool restriction.
+- **Cron/gateway instability:** keep cron payload minimal; centralize logic in a single runner script.
+- **Partial runs:** use idempotent markers ("started" comment) + state file to resume safely.
+- **Third-party API errors:** exponential backoff, rate limits, and bounded retries.
+
+## 6. KPIs / SLOs (Recommended)
+- **MTTR reduction:** time from issue labeled to PR created.
+- **Success rate:** % of runs resulting in a PR with passing tests.
+- **Noise control:** average retries per issue (target <= 1).
+- **Safety:** 0 unapproved outbound actions.
+
+## 7. Rollback / Recovery
+- PR-based workflow enables easy rollback by reverting PR commits.
+- Keep changes small and scoped to the issue.
+- If automation fails repeatedly, fall back to manual fix with the same reporting format.

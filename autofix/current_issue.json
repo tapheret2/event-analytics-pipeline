@@ -1,0 +1,6 @@
+{
+  "repo": "Peganyx/test-agent",
+  "issue_number": 26,
+  "title": "Command injection and pickle deserialization vulnerabilities",
+  "url": "https://github.com/Peganyx/test-agent/issues/26"
+}

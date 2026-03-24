@@ -1,0 +1,9 @@
+﻿{
+    "base":  "main",
+    "branch":  "fix/issue-39",
+    "repo":  "Peganyx/test-agent",
+    "tokenHint":  "loaded",
+    "issue":  39,
+    "tmp":  "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\autofix-39-2c2236ffebf54618a9fad3f4c05d6d84",
+    "title":  "[BUG] Rate limiting missing on /tasks endpoint leads to spam/DoS"
+}

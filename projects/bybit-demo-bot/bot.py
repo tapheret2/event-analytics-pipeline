@@ -1,18 +1,17 @@
 from __future__ import annotations
 
+import json
+import math
 import os
 import sys
 import time
-import math
-import json
-import random
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any
 
 from pybit.unified_trading import HTTP
 
-# Make Windows console output resilient
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
@@ -20,118 +19,110 @@ except Exception:
 
 
 # ----------------------------
-# Secrets / env helpers (Windows-friendly)
+# Env helpers
 # ----------------------------
 
-_LEAKED_KEY = "pTwlMemPdrEyWh5vbx"
-_LEAKED_SECRET = "Pad5AQWaTEbXi49uiuTYjexkSizmP3LWbtaa"
+
+def get_env(name: str, default: str | None = None) -> str | None:
+    value = os.environ.get(name)
+    return value if value not in (None, "") else default
 
 
-def get_env(name: str) -> str | None:
-    r"""Get env var.
+def env_bool(name: str, default: bool) -> bool:
+    value = (get_env(name) or "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "y", "on"}
 
-    On Windows, prefer HKCU\Environment (setx) because the current agent process
-    may have stale environment variables.
-    """
 
-    reg_val: str | None = None
-    if os.name == "nt":
-        try:
-            import winreg
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(str(get_env(name, str(default))).strip())
+    except Exception:
+        return default
 
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as k:
-                val, _typ = winreg.QueryValueEx(k, name)
-                if isinstance(val, str) and val:
-                    reg_val = val
-        except Exception:
-            reg_val = None
 
-    proc_val = os.environ.get(name)
-
-    # If registry exists, trust it over process env (stale after setx).
-    if reg_val:
-        return reg_val
-
-    if proc_val:
-        return proc_val
-
-    return None
+def env_float(name: str, default: float) -> float:
+    try:
+        raw = str(get_env(name, str(default))).split("#", 1)[0].strip()
+        return float(raw)
+    except Exception:
+        return default
 
 
 # ----------------------------
 # Config
 # ----------------------------
 
+
 @dataclass
 class BotConfig:
     demo: bool = True
     testnet: bool = False
+    category: str = "linear"
+    symbol: str = "BTCUSDT"
+    timeframe: str = "15"
+    analysis_interval_seconds: int = 60
+    leverage: int = 20
 
-    category: str = "linear"  # USDT perpetual
+    max_risk_pct: float = 1.0
+    max_position_pct: float = 15.0
+    stop_loss_pct: float = 1.5
+    take_profit_pct: float = 2.5
+    atr_sl_mult: float = 1.6
+    atr_tp_mult: float = 4.0
+    trailing_stop_atr: float = 2.0
+    trailing_step_atr: float = 1.0
+    max_daily_loss_pct: float = 4.0
+    max_consecutive_losses: int = 2
+    daily_target_pct: float = 1.2
+    max_drawdown_pct: float = 15.0
 
-    leverage: int = 50
-    leverage_hard_cap: int = 25  # to avoid Bybit position limit errors on small-caps
-
-    # risk model (demo): fraction of equity you're willing to lose *at stop* per trade
-    risk_per_trade: float = 0.20  # 20%
-
-    # extra cap so we don't hit exchange position limits / absurd sizes
-    max_notional_per_trade: float = 200_000  # USDT
-
-    # cadence
-    cooldown_seconds: int = 0
-    poll_seconds: int = 10
-
-    # technicals
-    ema_fast: int = 50
-    ema_slow: int = 200
+    ema_fast: int = 20
+    ema_slow: int = 50
     rsi_len: int = 14
     atr_len: int = 14
+    adx_len: int = 14
+    rsi_long_floor: float = 52.0
+    rsi_short_ceiling: float = 48.0
 
-    sl_atr_mult: float = 1.2
-    tp_atr_mult: float = 1.8
+    dashboard_host: str = "0.0.0.0"
+    dashboard_port: int = 8000
 
-    # fee-aware exits (taker fee observed ~0.055% on Bybit demo)
-    taker_fee_rate: float = 0.00055
-    fee_buffer_mult: float = 3.0  # TP distance >= roundtrip_fee * buffer
 
-    # portfolio behavior
-    max_open_positions: int = 5  # user-requested: 5 different coins at once (no scale-in)
+def load_config() -> BotConfig:
+    timeframe_raw = (get_env("TIMEFRAME", "15m") or "15m").strip().lower()
+    if timeframe_raw.endswith("m"):
+        timeframe = timeframe_raw[:-1]
+    else:
+        timeframe = timeframe_raw
 
-    # universe selection
-    meme_watchlist: tuple[str, ...] = (
-        "DOGEUSDT",
-        "1000PEPEUSDT",
-        "WIFUSDT",
-        "1000BONKUSDT",
-        "1000FLOKIUSDT",
-        "SHIB1000USDT",
-        "BRETTUSDT",
-        "1000000MOGUSDT",
-        "POPCATUSDT",
-        "1000TURBOUSDT",
-        "1000000BABYDOGEUSDT",
+    return BotConfig(
+        demo=env_bool("BYBIT_DEMO", True),
+        testnet=env_bool("BYBIT_TESTNET", False),
+        symbol=(get_env("SYMBOL", "BTCUSDT") or "BTCUSDT").strip().upper(),
+        timeframe=timeframe,
+        analysis_interval_seconds=env_int("ANALYSIS_INTERVAL_SECONDS", 60),
+        leverage=env_int("LEVERAGE", 20),
+        max_risk_pct=env_float("MAX_RISK_PCT", 1.0),
+        max_position_pct=env_float("MAX_POSITION_PCT", 15.0),
+        stop_loss_pct=env_float("STOP_LOSS_PCT", 1.5),
+        take_profit_pct=env_float("TAKE_PROFIT_PCT", 2.5),
+        atr_sl_mult=env_float("ATR_SL_MULT", 1.6),
+        atr_tp_mult=env_float("ATR_TP_MULT", 4.0),
+        trailing_stop_atr=env_float("TRAILING_STOP_ATR", 2.0),
+        trailing_step_atr=env_float("TRAILING_STEP_ATR", 1.0),
+        max_daily_loss_pct=env_float("MAX_DAILY_LOSS_PCT", 4.0),
+        max_consecutive_losses=env_int("MAX_CONSECUTIVE_LOSSES", 2),
+        daily_target_pct=env_float("DAILY_TARGET_PCT", 1.2),
+        max_drawdown_pct=env_float("MAX_DRAWDOWN_PCT", 15.0),
+        dashboard_host=get_env("DASHBOARD_HOST", "0.0.0.0") or "0.0.0.0",
+        dashboard_port=env_int("DASHBOARD_PORT", 8000),
     )
-
-    exclude_symbols: tuple[str, ...] = (
-        "BTCUSDT",
-        "ETHUSDT",
-        "SOLUSDT",
-        "BNBUSDT",
-        "XRPUSDT",
-    )
-    # turnover thresholds
-    min_turnover_watchlist: float = 1_000_000   # 1M USDT (for meme watchlist symbols)
-    min_turnover_24h: float = 50_000_000        # 50M USDT (for non-watchlist symbols)
-
-    max_symbols_considered: int = 80
-
-    # anti-bug safety (not a PnL-based daily max loss)
-    max_entries_per_hour: int = 60
 
 
 # ----------------------------
-# Helpers: indicators
+# Indicators
 # ----------------------------
 
 
@@ -139,10 +130,8 @@ def ema(values: list[float], period: int) -> list[float]:
     if len(values) < period:
         raise ValueError("not enough values for EMA")
     k = 2 / (period + 1)
-    out = []
-    # seed with SMA
-    sma = sum(values[:period]) / period
-    out.append(sma)
+    seed = sum(values[:period]) / period
+    out = [seed]
     for v in values[period:]:
         out.append(out[-1] + k * (v - out[-1]))
     return [out[0]] * (period - 1) + out
@@ -151,33 +140,28 @@ def ema(values: list[float], period: int) -> list[float]:
 def rsi(values: list[float], period: int) -> list[float]:
     if len(values) < period + 1:
         raise ValueError("not enough values for RSI")
-    gains = []
-    losses = []
+    gains: list[float] = []
+    losses: list[float] = []
     for i in range(1, len(values)):
-        ch = values[i] - values[i - 1]
-        gains.append(max(ch, 0.0))
-        losses.append(max(-ch, 0.0))
+        diff = values[i] - values[i - 1]
+        gains.append(max(diff, 0.0))
+        losses.append(max(-diff, 0.0))
 
-    # initial avg
     avg_gain = sum(gains[:period]) / period
     avg_loss = sum(losses[:period]) / period
-
-    out = [50.0] * (period)  # align to values length-1; we'll pad later
+    out = [50.0] * period
     for i in range(period, len(gains)):
         avg_gain = (avg_gain * (period - 1) + gains[i]) / period
         avg_loss = (avg_loss * (period - 1) + losses[i]) / period
         rs = avg_gain / avg_loss if avg_loss != 0 else float("inf")
-        val = 100 - (100 / (1 + rs))
-        out.append(val)
-
-    # pad to same length as values
+        out.append(100 - (100 / (1 + rs)))
     return [50.0] + out
 
 
 def atr(highs: list[float], lows: list[float], closes: list[float], period: int) -> list[float]:
     if len(closes) < period + 1:
         raise ValueError("not enough values for ATR")
-    trs = []
+    trs: list[float] = []
     for i in range(1, len(closes)):
         tr = max(
             highs[i] - lows[i],
@@ -185,23 +169,103 @@ def atr(highs: list[float], lows: list[float], closes: list[float], period: int)
             abs(lows[i] - closes[i - 1]),
         )
         trs.append(tr)
-
-    # Wilder smoothing
-    out = []
     first = sum(trs[:period]) / period
-    out.append(first)
+    out = [first]
     for tr in trs[period:]:
         out.append((out[-1] * (period - 1) + tr) / period)
+    return [out[0]] * period + out
 
-    return [out[0]] * (period) + out  # align to closes length
+
+def adx(highs: list[float], lows: list[float], closes: list[float], period: int) -> list[float]:
+    if len(closes) < period * 2:
+        raise ValueError("not enough values for ADX")
+
+    tr_list: list[float] = []
+    plus_dm_list: list[float] = []
+    minus_dm_list: list[float] = []
+
+    for i in range(1, len(closes)):
+        up = highs[i] - highs[i - 1]
+        down = lows[i - 1] - lows[i]
+        plus_dm = up if up > down and up > 0 else 0.0
+        minus_dm = down if down > up and down > 0 else 0.0
+        tr = max(
+            highs[i] - lows[i],
+            abs(highs[i] - closes[i - 1]),
+            abs(lows[i] - closes[i - 1]),
+        )
+        tr_list.append(tr)
+        plus_dm_list.append(plus_dm)
+        minus_dm_list.append(minus_dm)
+
+    tr_smooth = sum(tr_list[:period])
+    plus_dm_smooth = sum(plus_dm_list[:period])
+    minus_dm_smooth = sum(minus_dm_list[:period])
+
+    dx_vals: list[float] = []
+    for i in range(period, len(tr_list)):
+        if i > period:
+            tr_smooth = tr_smooth - (tr_smooth / period) + tr_list[i]
+            plus_dm_smooth = plus_dm_smooth - (plus_dm_smooth / period) + plus_dm_list[i]
+            minus_dm_smooth = minus_dm_smooth - (minus_dm_smooth / period) + minus_dm_list[i]
+
+        plus_di = 100 * (plus_dm_smooth / tr_smooth) if tr_smooth else 0.0
+        minus_di = 100 * (minus_dm_smooth / tr_smooth) if tr_smooth else 0.0
+        denom = plus_di + minus_di
+        dx = 100 * abs(plus_di - minus_di) / denom if denom else 0.0
+        dx_vals.append(dx)
+
+    if len(dx_vals) < period:
+        raise ValueError("not enough DX values for ADX")
+
+    adx_seed = sum(dx_vals[:period]) / period
+    out = [adx_seed]
+    for dxv in dx_vals[period:]:
+        out.append(((out[-1] * (period - 1)) + dxv) / period)
+
+    pad = len(closes) - len(out)
+    return [out[0]] * pad + out
 
 
-def utc_ms() -> int:
-    return int(time.time() * 1000)
+# ----------------------------
+# Utils
+# ----------------------------
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def utc_ts() -> int:
+    return int(time.time())
+
+
+def utc_day() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def safe_float(v: Any, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+
+def round_down(x: float, step: float) -> float:
+    if step <= 0:
+        return x
+    return math.floor(x / step) * step
+
+
+def round_up(x: float, step: float) -> float:
+    if step <= 0:
+        return x
+    return math.ceil(x / step) * step
+
+
+def fmt_price(x: float, tick: float, mode: str) -> str:
+    value = round_down(x, tick) if mode == "down" else round_up(x, tick)
+    return f"{value:.10f}".rstrip("0").rstrip(".")
 
 
 # ----------------------------
@@ -213,406 +277,334 @@ def make_session() -> HTTP:
     api_key = get_env("BYBIT_API_KEY")
     api_secret = get_env("BYBIT_API_SECRET")
     if not api_key or not api_secret:
-        raise SystemExit("Missing BYBIT_API_KEY / BYBIT_API_SECRET (env or HKCU\\Environment)")
+        raise SystemExit("Missing BYBIT_API_KEY / BYBIT_API_SECRET")
 
-    # Refuse to run with a leaked key that was pasted in chat.
-    if api_key == _LEAKED_KEY or api_secret == _LEAKED_SECRET:
-        raise SystemExit("Refusing to run: current BYBIT_API_KEY/SECRET match a leaked key. Rotate the key and set it again.")
-
-    demo = (get_env("BYBIT_DEMO") or "true").lower() in ("1", "true", "yes", "y")
-    testnet = (get_env("BYBIT_TESTNET") or "false").lower() in ("1", "true", "yes", "y")
-
-    s = HTTP(
+    cfg = load_config()
+    session = HTTP(
         api_key=api_key,
         api_secret=api_secret,
-        demo=demo,
-        testnet=testnet,
-        recv_window=10_000,
+        demo=cfg.demo,
+        testnet=cfg.testnet,
+        recv_window=10000,
         timeout=20,
     )
-
-    # sanity check: demo endpoint should contain api-demo
-    if demo and "api-demo" not in s.endpoint:
-        raise SystemExit(f"Refusing to run: demo=true but endpoint is {s.endpoint}")
-
-    return s
+    return session
 
 
-def get_equity_usdt(session: HTTP) -> float:
-    # unified account balance
+def get_wallet_snapshot(session: HTTP) -> dict[str, float]:
     resp = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")
-    item = (resp.get("result", {}) or {}).get("list", [])
-    if not item:
+    rows = (resp.get("result", {}) or {}).get("list", [])
+    if not rows:
         raise RuntimeError("No wallet balance returned")
-    coins = (item[0] or {}).get("coin", [])
+    coins = (rows[0] or {}).get("coin", [])
     usdt = next((c for c in coins if c.get("coin") == "USDT"), None)
     if not usdt:
         raise RuntimeError("USDT balance not found")
-    # prioritize totalEquity
-    for k in ("totalEquity", "equity", "walletBalance"):
-        v = usdt.get(k)
-        if v is not None:
-            try:
-                return float(v)
-            except Exception:
-                pass
-    raise RuntimeError("Could not parse equity")
+    return {
+        "equity": safe_float(usdt.get("equity") or usdt.get("walletBalance") or 0),
+        "wallet_balance": safe_float(usdt.get("walletBalance") or 0),
+        "available": safe_float(usdt.get("availableToWithdraw") or usdt.get("availableBalance") or 0),
+    }
 
 
-def list_candidate_symbols(session: HTTP, cfg: BotConfig) -> list[dict[str, Any]]:
-    resp = session.get_tickers(category=cfg.category)
-    tickers = (resp.get("result", {}) or {}).get("list", [])
-
-    out = []
-    for t in tickers:
-        sym = t.get("symbol")
-        if not sym or not sym.endswith("USDT"):
-            continue
-        if sym in cfg.exclude_symbols:
-            continue
-        # filter on turnover
-        try:
-            turnover = float(t.get("turnover24h", 0) or 0)
-        except Exception:
-            turnover = 0
-        if turnover < cfg.min_turnover_24h:
-            continue
-        # filter on lastPrice
-        try:
-            last = float(t.get("lastPrice", 0) or 0)
-        except Exception:
-            last = 0
-        if last <= 0:
-            continue
-        out.append({
-            "symbol": sym,
-            "turnover24h": turnover,
-            "lastPrice": last,
-            "price24hPcnt": float(t.get("price24hPcnt", 0) or 0),
-        })
-
-    # sort by abs daily move, then turnover
-    out.sort(key=lambda x: (abs(x["price24hPcnt"]), x["turnover24h"]), reverse=True)
-    return out[: cfg.max_symbols_considered]
+def get_ticker(session: HTTP, category: str, symbol: str) -> dict[str, Any]:
+    resp = session.get_tickers(category=category, symbol=symbol)
+    lst = (resp.get("result", {}) or {}).get("list", [])
+    if not lst:
+        raise RuntimeError(f"Ticker not found for {symbol}")
+    return lst[0]
 
 
-def choose_symbol(session: HTTP, cfg: BotConfig, *, exclude: set[str]) -> str | None:
-    """Pick a symbol not in `exclude`.
-
-    Prefer meme watchlist if available & liquid; fallback to high-volatility liquid symbols.
-    """
-
-    # Build a quick lookup from tickers
-    resp = session.get_tickers(category=cfg.category)
-    tickers = (resp.get("result", {}) or {}).get("list", [])
-    by_sym = {t.get("symbol"): t for t in tickers if t.get("symbol")}
-
-    def ok(sym: str) -> bool:
-        if sym in exclude:
-            return False
-        if sym in cfg.exclude_symbols:
-            return False
-        t = by_sym.get(sym)
-        if not t:
-            return False
-        try:
-            turnover = float(t.get("turnover24h", 0) or 0)
-            last = float(t.get("lastPrice", 0) or 0)
-        except Exception:
-            return False
-
-        if last <= 0:
-            return False
-
-        # For meme watchlist, allow much lower turnover.
-        thresh = cfg.min_turnover_watchlist if sym in cfg.meme_watchlist else cfg.min_turnover_24h
-        return turnover >= thresh
-
-    # 1) Prefer watchlist
-    watch = [s for s in cfg.meme_watchlist if ok(s)]
-    if watch:
-        return random.choice(watch)
-
-    # If watchlist has no eligible symbols, stop (user explicitly wants meme coins, not random small-caps).
-    return None
-
-
-def get_klines(session: HTTP, category: str, symbol: str, interval: str, limit: int = 300) -> list[dict[str, Any]]:
-    resp = session.get_kline(category=category, symbol=symbol, interval=interval, limit=limit)
-    rows = (resp.get("result", {}) or {}).get("list", [])
-    # bybit returns newest first; reverse
-    rows = list(reversed(rows))
-    return rows
-
-
-def parse_ohlc(rows: list[dict[str, Any]]):
-    ts = []
-    o = []
-    h = []
-    l = []
-    c = []
-    for r in rows:
-        # r: [startTime, open, high, low, close, volume, turnover]
-        start = int(r[0])
-        ts.append(start)
-        o.append(float(r[1]))
-        h.append(float(r[2]))
-        l.append(float(r[3]))
-        c.append(float(r[4]))
-    return ts, o, h, l, c
-
-
-def get_position(session: HTTP, cfg: BotConfig, symbol: str) -> Optional[dict[str, Any]]:
-    resp = session.get_positions(category=cfg.category, symbol=symbol)
+def get_position(session: HTTP, category: str, symbol: str) -> dict[str, Any] | None:
+    resp = session.get_positions(category=category, symbol=symbol)
     rows = (resp.get("result", {}) or {}).get("list", [])
     if not rows:
         return None
-    pos = rows[0]
-    try:
-        size = float(pos.get("size", 0) or 0)
-    except Exception:
-        size = 0
-    if size == 0:
-        return None
-    return pos
+    for pos in rows:
+        if safe_float(pos.get("size")) > 0:
+            return pos
+    return None
 
 
-def get_max_leverage(session: HTTP, cfg: BotConfig, symbol: str) -> float | None:
-    try:
-        resp = session.get_instruments_info(category=cfg.category, symbol=symbol)
-        lst = (resp.get("result", {}) or {}).get("list", [])
-        if not lst:
-            return None
-        levf = (lst[0] or {}).get("leverageFilter", {}) or {}
-        ml = levf.get("maxLeverage")
-        return float(ml) if ml is not None else None
-    except Exception:
-        return None
+def get_klines(session: HTTP, category: str, symbol: str, interval: str, limit: int = 300) -> list[list[str]]:
+    resp = session.get_kline(category=category, symbol=symbol, interval=interval, limit=limit)
+    rows = (resp.get("result", {}) or {}).get("list", [])
+    return list(reversed(rows))
 
 
-def set_leverage(session: HTTP, cfg: BotConfig, symbol: str) -> int | None:
-    max_lev = get_max_leverage(session, cfg, symbol)
-    target = cfg.leverage
-    if max_lev:
-        target = min(target, int(float(max_lev)))
-    # hard cap to avoid small-cap risk limit errors
-    target = min(target, int(cfg.leverage_hard_cap))
-    if target < 1:
-        target = 1
-
-    lev = str(target)
-    session.set_leverage(category=cfg.category, symbol=symbol, buyLeverage=lev, sellLeverage=lev)
-    return target
+def parse_ohlc(rows: list[list[str]]) -> tuple[list[float], list[float], list[float], list[float]]:
+    highs: list[float] = []
+    lows: list[float] = []
+    closes: list[float] = []
+    volumes: list[float] = []
+    for r in rows:
+        highs.append(float(r[2]))
+        lows.append(float(r[3]))
+        closes.append(float(r[4]))
+        volumes.append(float(r[5]))
+    return highs, lows, closes, volumes
 
 
-def place_market(
-    session: HTTP,
-    cfg: BotConfig,
-    symbol: str,
-    side: str,
-    qty: float,
-    *,
-    reduce_only: bool = False,
-) -> dict[str, Any]:
-    q = f"{qty:.6f}".rstrip("0").rstrip(".")
+def get_instrument_filters(session: HTTP, category: str, symbol: str) -> dict[str, float]:
+    resp = session.get_instruments_info(category=category, symbol=symbol)
+    rows = (resp.get("result", {}) or {}).get("list", [])
+    if not rows:
+        raise RuntimeError(f"Instrument not found for {symbol}")
+    row = rows[0]
+    lot = (row.get("lotSizeFilter") or {})
+    price = (row.get("priceFilter") or {})
+    lev = (row.get("leverageFilter") or {})
+    return {
+        "min_qty": safe_float(lot.get("minOrderQty")),
+        "qty_step": safe_float(lot.get("qtyStep")),
+        "max_mkt_qty": safe_float(lot.get("maxMktOrderQty")),
+        "max_qty": safe_float(lot.get("maxOrderQty")),
+        "min_notional": safe_float(lot.get("minNotionalValue")),
+        "tick_size": safe_float(price.get("tickSize")),
+        "max_leverage": safe_float(lev.get("maxLeverage"), 1.0),
+    }
+
+
+def set_leverage(session: HTTP, cfg: BotConfig, symbol: str, max_leverage: float) -> int:
+    lev = max(1, min(cfg.leverage, int(max_leverage) if max_leverage else cfg.leverage))
+    session.set_leverage(category=cfg.category, symbol=symbol, buyLeverage=str(lev), sellLeverage=str(lev))
+    return lev
+
+
+def place_market_order(session: HTTP, cfg: BotConfig, symbol: str, side: str, qty: float, reduce_only: bool = False) -> dict[str, Any]:
+    q = f"{qty:.8f}".rstrip("0").rstrip(".")
     return session.place_order(
         category=cfg.category,
         symbol=symbol,
         side=side,
         orderType="Market",
         qty=q,
-        timeInForce="IOC",
         reduceOnly=reduce_only,
+        timeInForce="IOC",
     )
 
 
-def get_tick_size(session: HTTP, cfg: BotConfig, symbol: str) -> float | None:
-    try:
-        resp = session.get_instruments_info(category=cfg.category, symbol=symbol)
-        lst = (resp.get("result", {}) or {}).get("list", [])
-        if not lst:
-            return None
-        pf = (lst[0] or {}).get("priceFilter", {}) or {}
-        ts = pf.get("tickSize")
-        return float(ts) if ts is not None else None
-    except Exception:
-        return None
-
-
-def _round_up(x: float, step: float) -> float:
-    if step <= 0:
-        return x
-    return math.ceil(x / step) * step
-
-
-def fmt_price(x: float, tick: float, *, mode: str) -> str:
-    """Format price to tick size.
-
-    mode:
-      - 'down' => floor to tick
-      - 'up'   => ceil to tick
-    """
-    if tick and tick > 0:
-        x = _round_down(x, tick) if mode == "down" else _round_up(x, tick)
-
-    # avoid scientific notation
-    s = f"{x:.10f}".rstrip("0").rstrip(".")
-    return s
-
-
-def set_tp_sl(session: HTTP, cfg: BotConfig, symbol: str, side: str, take_profit: float, stop_loss: float):
-    tick = get_tick_size(session, cfg, symbol) or 0.0
-
-    # Safer rounding:
-    # - For TP on both sides: round down (avoid accidentally crossing entry due to rounding)
-    # - For SL: round up
-    tp_s = fmt_price(take_profit, tick, mode="down")
-    sl_s = fmt_price(stop_loss, tick, mode="up")
-
+def set_trading_stop(session: HTTP, cfg: BotConfig, symbol: str, take_profit: float, stop_loss: float, *, tick_size: float):
     session.set_trading_stop(
         category=cfg.category,
         symbol=symbol,
-        takeProfit=tp_s,
-        stopLoss=sl_s,
+        takeProfit=fmt_price(take_profit, tick_size, "down"),
+        stopLoss=fmt_price(stop_loss, tick_size, "up"),
         tpTriggerBy="LastPrice",
         slTriggerBy="LastPrice",
     )
 
 
 # ----------------------------
-# Strategy
+# Strategy + risk
 # ----------------------------
 
 
-def decide_bias(session: HTTP, cfg: BotConfig, symbol: str) -> str:
-    rows_15m = get_klines(session, cfg.category, symbol, interval="15", limit=max(cfg.ema_slow + 50, 260))
-    _, _, _, _, closes = parse_ohlc(rows_15m)
-    e_fast = ema(closes, cfg.ema_fast)
-    e_slow = ema(closes, cfg.ema_slow)
+def build_signal(cfg: BotConfig, highs: list[float], lows: list[float], closes: list[float]) -> dict[str, Any]:
+    ema_fast = ema(closes, cfg.ema_fast)
+    ema_slow = ema(closes, cfg.ema_slow)
+    rsi_vals = rsi(closes, cfg.rsi_len)
+    atr_vals = atr(highs, lows, closes, cfg.atr_len)
+    adx_vals = adx(highs, lows, closes, cfg.adx_len)
 
-    if e_fast[-1] > e_slow[-1]:
-        return "LONG"
+    last = closes[-1]
+    fast = ema_fast[-1]
+    slow = ema_slow[-1]
+    r = rsi_vals[-1]
+    a = atr_vals[-1]
+    adx_now = adx_vals[-1]
+
+    long_ok = fast > slow and r >= cfg.rsi_long_floor and adx_now >= 18
+    short_ok = fast < slow and r <= cfg.rsi_short_ceiling and adx_now >= 18
+
+    if long_ok and not short_ok:
+        side = "Buy"
+    elif short_ok and not long_ok:
+        side = "Sell"
     else:
-        return "SHORT"
+        side = "NONE"
+
+    return {
+        "side": side,
+        "price": last,
+        "ema_fast": fast,
+        "ema_slow": slow,
+        "rsi": r,
+        "atr": a,
+        "adx": adx_now,
+    }
 
 
-def entry_signal(session: HTTP, cfg: BotConfig, symbol: str, bias: str, *, first_trade: bool) -> bool:
-    """Entry trigger (demo aggressive mode).
-
-    With cooldown=0 and no 15m guard, we enter whenever flat and allowed by max_entries_per_hour.
-    """
-
-    return True
-
-
-def compute_tp_sl(session: HTTP, cfg: BotConfig, symbol: str, side: str, entry: float) -> tuple[float, float]:
-    """Compute fee-aware TP/SL.
-
-    Fee-aware rule (based on observed taker fee):
-    - Ensure TP distance >= roundtrip_fee * buffer.
-
-    roundtrip_fee_pct ≈ 2 * taker_fee_rate
-    min_tp_pct = roundtrip_fee_pct * fee_buffer_mult
-
-    This prevents tiny TP that can't cover fees.
-    """
-
-    rows_1m = get_klines(session, cfg.category, symbol, interval="1", limit=200)
-    _, _, highs, lows, closes = parse_ohlc(rows_1m)
-    a = atr(highs, lows, closes, cfg.atr_len)
-    atr_now = a[-1]
-
-    sl_dist = cfg.sl_atr_mult * atr_now
-    tp_dist = cfg.tp_atr_mult * atr_now
-
-    # fee-aware minimum TP distance
-    min_tp_pct = (2.0 * cfg.taker_fee_rate) * cfg.fee_buffer_mult
-    min_tp_dist = entry * min_tp_pct
-    tp_dist = max(tp_dist, min_tp_dist)
+def compute_exit_prices(cfg: BotConfig, side: str, entry_price: float, atr_now: float) -> tuple[float, float]:
+    sl_dist = atr_now * cfg.atr_sl_mult if atr_now > 0 else entry_price * (cfg.stop_loss_pct / 100.0)
+    tp_dist = atr_now * cfg.atr_tp_mult if atr_now > 0 else entry_price * (cfg.take_profit_pct / 100.0)
 
     if side == "Buy":
-        sl = entry - sl_dist
-        tp = entry + tp_dist
+        stop_loss = entry_price - sl_dist
+        take_profit = entry_price + tp_dist
     else:
-        sl = entry + sl_dist
-        tp = entry - tp_dist
+        stop_loss = entry_price + sl_dist
+        take_profit = entry_price - tp_dist
 
-    return tp, max(sl, 0.0000001)
-
-
-def _round_down(x: float, step: float) -> float:
-    if step <= 0:
-        return x
-    return math.floor(x / step) * step
+    return take_profit, max(stop_loss, 0.0000001)
 
 
-def get_lot_limits(session: HTTP, cfg: BotConfig, symbol: str) -> dict[str, float] | None:
-    """Fetch lot size limits for symbol (min/max/step + min notional)."""
-    try:
-        resp = session.get_instruments_info(category=cfg.category, symbol=symbol)
-        lst = (resp.get("result", {}) or {}).get("list", [])
-        if not lst:
-            return None
-        lot = (lst[0] or {}).get("lotSizeFilter", {}) or {}
-        return {
-            "minOrderQty": float(lot.get("minOrderQty", 0) or 0),
-            "maxOrderQty": float(lot.get("maxOrderQty", 0) or 0),
-            "maxMktOrderQty": float(lot.get("maxMktOrderQty", 0) or 0),
-            "qtyStep": float(lot.get("qtyStep", 0) or 0),
-            "minNotionalValue": float(lot.get("minNotionalValue", 0) or 0),
-        }
-    except Exception:
-        return None
-
-
-def compute_qty(
-    equity: float,
-    risk_usdt: float,
-    entry: float,
-    stop_loss: float,
-    cfg: BotConfig,
-    lot: dict[str, float] | None,
-    order_type: str = "Market",
-) -> float:
+def compute_qty(cfg: BotConfig, equity: float, entry: float, stop_loss: float, leverage: int, filters: dict[str, float]) -> float:
+    risk_usdt = equity * (cfg.max_risk_pct / 100.0)
     stop_dist = abs(entry - stop_loss)
     if stop_dist <= 0:
         return 0.0
 
     qty_by_risk = risk_usdt / stop_dist
-    max_notional = min(equity * cfg.leverage * 0.9, cfg.max_notional_per_trade)
-    qty_cap = max_notional / entry
 
-    qty = min(qty_by_risk, qty_cap)
+    max_margin = equity * (cfg.max_position_pct / 100.0)
+    max_notional = max_margin * leverage
+    qty_by_cap = max_notional / entry if entry > 0 else 0.0
 
-    # Apply exchange limits
-    if lot:
-        step = lot.get("qtyStep", 0.0) or 0.0
-        min_qty = lot.get("minOrderQty", 0.0) or 0.0
-        max_qty = lot.get("maxOrderQty", 0.0) or 0.0
-        max_mkt = lot.get("maxMktOrderQty", 0.0) or 0.0
-        min_notional = lot.get("minNotionalValue", 0.0) or 0.0
+    qty = min(qty_by_risk, qty_by_cap)
 
-        # cap market order
-        if order_type.lower() == "market" and max_mkt > 0:
-            qty = min(qty, max_mkt)
-        elif max_qty > 0:
-            qty = min(qty, max_qty)
+    step = filters.get("qty_step", 0.0)
+    if step > 0:
+        qty = round_down(qty, step)
 
-        if step > 0:
-            qty = _round_down(qty, step)
+    min_qty = filters.get("min_qty", 0.0)
+    min_notional = filters.get("min_notional", 0.0)
+    if min_notional > 0 and entry > 0:
+        qty = max(qty, round_up(min_notional / entry, step or 0.0))
+    if min_qty > 0:
+        qty = max(qty, min_qty)
 
-        # ensure meets min notional
-        if min_notional > 0 and entry > 0:
-            min_qty_by_notional = min_notional / entry
-            if step > 0:
-                # round up to step
-                min_qty_by_notional = math.ceil(min_qty_by_notional / step) * step
-            qty = max(qty, min_qty_by_notional)
-
-        if min_qty > 0:
-            qty = max(qty, min_qty)
+    max_qty = filters.get("max_mkt_qty") or filters.get("max_qty") or 0.0
+    if max_qty > 0:
+        qty = min(qty, max_qty)
 
     return max(qty, 0.0)
+
+
+def pnl_pct_from_equity(start_equity: float, equity: float) -> float:
+    if start_equity <= 0:
+        return 0.0
+    return ((equity - start_equity) / start_equity) * 100.0
+
+
+# ----------------------------
+# State
+# ----------------------------
+
+
+BASE_DIR = Path(__file__).resolve().parent
+STATE_PATH = BASE_DIR / "state_v2.json"
+TRADE_LOG_PATH = BASE_DIR / "trades_v2.log.jsonl"
+RUNTIME_LOG_PATH = BASE_DIR / "bot_v2_runtime.log"
+
+
+DEFAULT_STATE: dict[str, Any] = {
+    "day": "",
+    "start_equity": 0.0,
+    "peak_equity": 0.0,
+    "daily_realized_pnl": 0.0,
+    "consecutive_losses": 0,
+    "paused": False,
+    "pause_reason": "",
+    "last_signal": None,
+    "last_loop_ts": 0,
+    "last_entry_ts": 0,
+    "open_trade": None,
+    "trade_seq": 0,
+}
+
+
+def load_state() -> dict[str, Any]:
+    if not STATE_PATH.exists():
+        return dict(DEFAULT_STATE)
+    try:
+        data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        merged = dict(DEFAULT_STATE)
+        merged.update(data)
+        return merged
+    except Exception:
+        return dict(DEFAULT_STATE)
+
+
+def save_state(state: dict[str, Any]):
+    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def log_runtime(message: str):
+    line = f"[{now_iso()}] {message}"
+    print(line)
+    with RUNTIME_LOG_PATH.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def log_trade(event: dict[str, Any]):
+    with TRADE_LOG_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+def reset_day_if_needed(state: dict[str, Any], equity: float):
+    today = utc_day()
+    if state.get("day") != today:
+        state["day"] = today
+        state["start_equity"] = equity
+        state["peak_equity"] = equity
+        state["daily_realized_pnl"] = 0.0
+        state["consecutive_losses"] = 0
+        state["paused"] = False
+        state["pause_reason"] = ""
+
+
+# ----------------------------
+# Trade lifecycle helpers
+# ----------------------------
+
+
+def sync_open_trade_from_exchange(state: dict[str, Any], position: dict[str, Any] | None):
+    open_trade = state.get("open_trade")
+    if position and not open_trade:
+        state["open_trade"] = {
+            "trade_id": f"restored-{utc_ts()}",
+            "side": position.get("side"),
+            "entry_price": safe_float(position.get("avgPrice")),
+            "qty": safe_float(position.get("size")),
+            "stop_loss": safe_float(position.get("stopLoss")),
+            "take_profit": safe_float(position.get("takeProfit")),
+            "atr_at_entry": 0.0,
+            "entry_ts": utc_ts(),
+            "best_price": safe_float(position.get("avgPrice")),
+            "trail_stage": 0,
+        }
+    elif not position and open_trade and str(open_trade.get("trade_id", "")).startswith("restored-"):
+        state["open_trade"] = None
+
+
+def evaluate_closed_trade(state: dict[str, Any], equity: float):
+    open_trade = state.get("open_trade")
+    if not open_trade:
+        return
+
+    prev_equity = float(state.get("peak_equity") or equity)
+    # only treat as closed if exchange says flat and we still had local open_trade
+    pnl_equity = equity - float(state.get("start_equity") or equity)
+    pnl_trade = pnl_equity - float(state.get("daily_realized_pnl") or 0.0)
+    if abs(pnl_trade) < 1e-9:
+        pnl_trade = 0.0
+
+    state["daily_realized_pnl"] = pnl_equity
+    if pnl_trade < 0:
+        state["consecutive_losses"] = int(state.get("consecutive_losses", 0) or 0) + 1
+    else:
+        state["consecutive_losses"] = 0
+
+    log_trade({
+        "ts": now_iso(),
+        "event": "trade_closed",
+        "trade": open_trade,
+        "realized_pnl_est": pnl_trade,
+        "equity": equity,
+        "peak_equity_before": prev_equity,
+    })
+    state["open_trade"] = None
 
 
 # ----------------------------
@@ -621,197 +613,167 @@ def compute_qty(
 
 
 def main():
-    cfg = BotConfig(
-        demo=(get_env("BYBIT_DEMO") or "true").lower() in ("1", "true", "yes", "y"),
-        testnet=(get_env("BYBIT_TESTNET") or "false").lower() in ("1", "true", "yes", "y"),
-    )
+    cfg = load_config()
     session = make_session()
+    state = load_state()
 
-    print(f"[{now_iso()}] Bybit endpoint: {session.endpoint}")
-    print(
-        f"[{now_iso()}] DEMO={cfg.demo} TESTNET={cfg.testnet} leverage={cfg.leverage} "
-        f"risk_per_trade={cfg.risk_per_trade} max_open_positions={cfg.max_open_positions} "
-        f"fee_min_tp_pct={(2*cfg.taker_fee_rate*cfg.fee_buffer_mult):.4%}"
+    log_runtime(
+        f"bot_start symbol={cfg.symbol} tf={cfg.timeframe} demo={cfg.demo} testnet={cfg.testnet} leverage={cfg.leverage} "
+        f"risk={cfg.max_risk_pct}% max_position={cfg.max_position_pct}%"
     )
-
-    base_dir = os.path.dirname(__file__)
-    state_path = os.path.join(base_dir, "state.json")
-    log_path = os.path.join(base_dir, "trades.log.jsonl")
-
-    state = {
-        "active_symbols": [],
-        "entries_last_hour": [],
-        "last_status_ms": 0,
-    }
-    if os.path.exists(state_path):
-        try:
-            state = json.loads(open(state_path, "r", encoding="utf-8").read())
-        except Exception:
-            pass
-
-    def save_state():
-        with open(state_path, "w", encoding="utf-8") as f:
-            f.write(json.dumps(state, ensure_ascii=False, indent=2))
-
-    # bootstrap active symbols: keep only meme watchlist symbols (user wants 5 different meme coins)
-    active: list[str] = list(state.get("active_symbols") or [])
-    active = [s for s in active if isinstance(s, str) and s]
-    active = [s for s in active if s in cfg.meme_watchlist]
-    state["active_symbols"] = active
-    save_state()
+    log_runtime(f"dashboard_config host={cfg.dashboard_host} port={cfg.dashboard_port} (dashboard wiring pending)")
 
     while True:
         try:
-            now_ms = utc_ms()
-            # cleanup entry timestamps
-            state["entries_last_hour"] = [t for t in state.get("entries_last_hour", []) if now_ms - t < 3600_000]
+            wallet = get_wallet_snapshot(session)
+            equity = wallet["equity"]
+            reset_day_if_needed(state, equity)
+            state["peak_equity"] = max(float(state.get("peak_equity") or 0.0), equity)
 
-            equity = get_equity_usdt(session)
+            filters = get_instrument_filters(session, cfg.category, cfg.symbol)
+            try:
+                actual_leverage = set_leverage(session, cfg, cfg.symbol, filters.get("max_leverage", cfg.leverage))
+            except Exception as e:
+                actual_leverage = max(1, min(cfg.leverage, int(filters.get("max_leverage") or cfg.leverage)))
+                log_runtime(f"WARN set_leverage_failed err={e}")
 
-            # Ensure we have up to N symbols to work with
-            while len(state["active_symbols"]) < cfg.max_open_positions:
-                sym = choose_symbol(session, cfg, exclude=set(state["active_symbols"]))
-                if not sym:
-                    break
-                state["active_symbols"].append(sym)
-                save_state()
+            rows = get_klines(session, cfg.category, cfg.symbol, cfg.timeframe, limit=max(cfg.ema_slow + cfg.adx_len + 50, 220))
+            highs, lows, closes, _volumes = parse_ohlc(rows)
+            signal = build_signal(cfg, highs, lows, closes)
+            ticker = get_ticker(session, cfg.category, cfg.symbol)
+            last_price = safe_float(ticker.get("lastPrice"), signal["price"])
+            position = get_position(session, cfg.category, cfg.symbol)
 
-            active = list(state["active_symbols"])
+            state["last_signal"] = {
+                "ts": now_iso(),
+                "side": signal["side"],
+                "price": last_price,
+                "ema_fast": signal["ema_fast"],
+                "ema_slow": signal["ema_slow"],
+                "rsi": signal["rsi"],
+                "atr": signal["atr"],
+                "adx": signal["adx"],
+            }
+            sync_open_trade_from_exchange(state, position)
 
-            # Gather positions
-            open_positions: dict[str, dict[str, Any]] = {}
-            for sym in active:
-                pos = get_position(session, cfg, sym)
-                if pos:
-                    open_positions[sym] = pos
+            if position is None and state.get("open_trade"):
+                evaluate_closed_trade(state, equity)
 
-            # Status
-            if now_ms - int(state.get("last_status_ms", 0) or 0) > 30_000:
-                state["last_status_ms"] = now_ms
-                print(
-                    f"[{now_iso()}] STATUS equity={equity:.2f} open={len(open_positions)}/{cfg.max_open_positions} "
-                    f"syms={','.join(active)}"
-                )
-                save_state()
+            daily_pnl_pct = pnl_pct_from_equity(float(state.get("start_equity") or equity), equity)
+            drawdown_pct = pnl_pct_from_equity(float(state.get("peak_equity") or equity), equity)
 
-            # If too many active symbols and some have no positions, trim extras
-            # (keep symbols with open positions)
-            if len(state["active_symbols"]) > cfg.max_open_positions:
-                keep = list(open_positions.keys())
-                state["active_symbols"] = keep[: cfg.max_open_positions]
-                save_state()
+            pause_reason = ""
+            if daily_pnl_pct <= -cfg.max_daily_loss_pct:
+                pause_reason = f"daily loss {daily_pnl_pct:.2f}% <= -{cfg.max_daily_loss_pct}%"
+            elif int(state.get("consecutive_losses") or 0) >= cfg.max_consecutive_losses:
+                pause_reason = f"consecutive losses >= {cfg.max_consecutive_losses}"
+            elif drawdown_pct <= -cfg.max_drawdown_pct:
+                pause_reason = f"drawdown {drawdown_pct:.2f}% <= -{cfg.max_drawdown_pct}%"
+            elif daily_pnl_pct >= cfg.daily_target_pct:
+                pause_reason = f"daily target hit {daily_pnl_pct:.2f}% >= {cfg.daily_target_pct}%"
 
-            # anti-bug throttle
-            if len(state["entries_last_hour"]) >= cfg.max_entries_per_hour:
-                print(f"[{now_iso()}] THROTTLE: max entries/hour reached")
-                time.sleep(15)
-                continue
+            state["paused"] = bool(pause_reason)
+            state["pause_reason"] = pause_reason
 
-            # Open new positions until we reach max_open_positions
-            slots = cfg.max_open_positions - len(open_positions)
-            if slots <= 0:
-                # print holds
-                for sym, pos in open_positions.items():
-                    try:
-                        side = pos.get("side")
-                        size = pos.get("size")
-                        avg = pos.get("avgPrice")
-                        upl = pos.get("unrealisedPnl")
-                        print(f"[{now_iso()}] HOLD {sym} {side} size={size} avg={avg} uPnL={upl}")
-                    except Exception:
-                        pass
-                time.sleep(cfg.poll_seconds)
-                continue
+            if position:
+                open_trade = state.get("open_trade") or {}
+                side = position.get("side")
+                avg_price = safe_float(position.get("avgPrice"))
+                atr_now = float(signal["atr"])
+                best_price = max(float(open_trade.get("best_price") or avg_price), last_price) if side == "Buy" else min(float(open_trade.get("best_price") or avg_price), last_price)
+                open_trade["best_price"] = best_price
+                open_trade["qty"] = safe_float(position.get("size"))
+                open_trade["entry_price"] = avg_price
 
-            # Risk allocation: spread total risk across N slots
-            risk_usdt_per_pos = equity * cfg.risk_per_trade / cfg.max_open_positions
+                move = (best_price - avg_price) if side == "Buy" else (avg_price - best_price)
+                trigger = atr_now * cfg.trailing_stop_atr
+                if atr_now > 0 and move >= trigger:
+                    if side == "Buy":
+                        new_sl = avg_price + (atr_now * cfg.trailing_step_atr)
+                    else:
+                        new_sl = avg_price - (atr_now * cfg.trailing_step_atr)
 
-            # Try to enter on any symbol without an open position
-            for sym in active:
-                if sym in open_positions:
-                    continue
-                if slots <= 0:
-                    break
+                    current_sl = safe_float(position.get("stopLoss") or open_trade.get("stop_loss"))
+                    should_update = (side == "Buy" and new_sl > current_sl) or (side == "Sell" and (current_sl == 0 or new_sl < current_sl))
+                    if should_update:
+                        tp = safe_float(position.get("takeProfit") or open_trade.get("take_profit"))
+                        try:
+                            set_trading_stop(session, cfg, cfg.symbol, tp, new_sl, tick_size=filters.get("tick_size", 0.0))
+                            open_trade["stop_loss"] = new_sl
+                            open_trade["trail_stage"] = int(open_trade.get("trail_stage") or 0) + 1
+                            log_runtime(f"trail_update side={side} new_sl={new_sl:.2f} price={last_price:.2f}")
+                        except Exception as e:
+                            log_runtime(f"WARN trail_update_failed err={e}")
+                state["open_trade"] = open_trade
+            else:
+                if not state["paused"] and signal["side"] in {"Buy", "Sell"}:
+                    take_profit, stop_loss = compute_exit_prices(cfg, signal["side"], last_price, float(signal["atr"]))
+                    qty = compute_qty(cfg, equity, last_price, stop_loss, actual_leverage, filters)
+                    if qty > 0:
+                        log_runtime(
+                            f"entry_signal side={signal['side']} price={last_price:.2f} qty={qty:.6f} sl={stop_loss:.2f} tp={take_profit:.2f} "
+                            f"rsi={signal['rsi']:.2f} adx={signal['adx']:.2f}"
+                        )
+                        order = place_market_order(session, cfg, cfg.symbol, signal["side"], qty)
+                        time.sleep(2)
+                        pos_after = get_position(session, cfg.category, cfg.symbol)
+                        entry_price = safe_float((pos_after or {}).get("avgPrice"), last_price)
+                        try:
+                            set_trading_stop(session, cfg, cfg.symbol, take_profit, stop_loss, tick_size=filters.get("tick_size", 0.0))
+                        except Exception as e:
+                            log_runtime(f"WARN initial_set_trading_stop_failed err={e}")
 
-                # anti-bug throttle
-                if len(state["entries_last_hour"]) >= cfg.max_entries_per_hour:
-                    break
+                        state["trade_seq"] = int(state.get("trade_seq") or 0) + 1
+                        trade_id = f"{utc_day()}-{state['trade_seq']}"
+                        state["last_entry_ts"] = utc_ts()
+                        state["open_trade"] = {
+                            "trade_id": trade_id,
+                            "side": signal["side"],
+                            "entry_price": entry_price,
+                            "qty": qty,
+                            "stop_loss": stop_loss,
+                            "take_profit": take_profit,
+                            "atr_at_entry": signal["atr"],
+                            "entry_ts": utc_ts(),
+                            "best_price": entry_price,
+                            "trail_stage": 0,
+                            "order_resp": order,
+                        }
+                        log_trade({
+                            "ts": now_iso(),
+                            "event": "trade_opened",
+                            "trade_id": trade_id,
+                            "side": signal["side"],
+                            "symbol": cfg.symbol,
+                            "entry_price": entry_price,
+                            "qty": qty,
+                            "stop_loss": stop_loss,
+                            "take_profit": take_profit,
+                            "atr": signal["atr"],
+                            "signal": state["last_signal"],
+                        })
+                    else:
+                        log_runtime("skip_entry qty<=0 after sizing")
+                elif state["paused"]:
+                    log_runtime(f"paused reason={state['pause_reason']}")
+                else:
+                    log_runtime(
+                        f"no_entry signal={signal['side']} price={last_price:.2f} ema_fast={signal['ema_fast']:.2f} "
+                        f"ema_slow={signal['ema_slow']:.2f} rsi={signal['rsi']:.2f} adx={signal['adx']:.2f}"
+                    )
 
-                bias = decide_bias(session, cfg, sym)
-                side = "Buy" if bias == "LONG" else "Sell"
-
-                # Best-effort leverage set per symbol
-                try:
-                    used = set_leverage(session, cfg, sym)
-                    if used:
-                        print(f"[{now_iso()}] {sym} leverage={used}x (req {cfg.leverage}x)")
-                except Exception as e:
-                    print(f"[{now_iso()}] WARN: set_leverage failed for {sym}: {e}")
-
-                # Price
-                t = session.get_tickers(category=cfg.category, symbol=sym)
-                last = float(((t.get("result", {}) or {}).get("list", [{}])[0] or {}).get("lastPrice"))
-
-                tp, sl = compute_tp_sl(session, cfg, sym, side, last)
-                lot = get_lot_limits(session, cfg, sym)
-                qty = compute_qty(
-                    equity=equity,
-                    risk_usdt=risk_usdt_per_pos,
-                    entry=last,
-                    stop_loss=sl,
-                    cfg=cfg,
-                    lot=lot,
-                    order_type="Market",
-                )
-                if qty <= 0:
-                    print(f"[{now_iso()}] SKIP {sym}: qty <= 0")
-                    continue
-
-                print(
-                    f"[{now_iso()}] ENTRY {sym} bias={bias} side={side} last={last:.6f} "
-                    f"qty={qty:.6f} SL={sl:.6f} TP={tp:.6f}"
-                )
-
-                try:
-                    r_order = place_market(session, cfg, sym, side, qty)
-                except Exception as e:
-                    print(f"[{now_iso()}] ORDER_FAILED {sym}: {e}")
-                    continue
-
-                try:
-                    set_tp_sl(session, cfg, sym, side, take_profit=tp, stop_loss=sl)
-                except Exception as e:
-                    print(f"[{now_iso()}] WARN: set_tp_sl failed for {sym}: {e}")
-
-                state["entries_last_hour"].append(now_ms)
-                save_state()
-
-                log_rec = {
-                    "ts": now_iso(),
-                    "symbol": sym,
-                    "bias": bias,
-                    "side": side,
-                    "entry_ref": last,
-                    "qty": qty,
-                    "sl": sl,
-                    "tp": tp,
-                    "equity": equity,
-                    "order_resp": r_order,
-                }
-                with open(log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(log_rec, ensure_ascii=False) + "\n")
-
-                # refresh open positions count
-                slots -= 1
-
-            time.sleep(cfg.poll_seconds)
+            state["last_loop_ts"] = utc_ts()
+            save_state(state)
+            time.sleep(max(15, cfg.analysis_interval_seconds))
 
         except KeyboardInterrupt:
-            print("\nStopped.")
+            log_runtime("stopped_by_user")
+            save_state(state)
             return
         except Exception as e:
-            print(f"[{now_iso()}] ERROR: {e}")
-            time.sleep(5)
+            log_runtime(f"ERROR {e}")
+            save_state(state)
+            time.sleep(10)
 
 
 if __name__ == "__main__":

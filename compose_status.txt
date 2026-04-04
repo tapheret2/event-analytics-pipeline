@@ -1,0 +1,5 @@
+NAME                         STATUS                     PORTS
+pipeline-airflow-scheduler   Up 3 minutes (healthy)     8080/tcp
+pipeline-airflow-webserver   Up 3 minutes (healthy)     0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp
+pipeline-postgres            Up 4 minutes (healthy)     0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp
+pipeline-streamlit           Up 4 minutes (unhealthy)   0.0.0.0:8501->8501/tcp, [::]:8501->8501/tcp

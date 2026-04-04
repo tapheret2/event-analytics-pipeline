@@ -1,0 +1,33 @@
+# =============================================================================
+# dbt Profiles - Database Connection
+# =============================================================================
+# This file configures how dbt connects to PostgreSQL.
+# In production, use environment variables for credentials.
+# =============================================================================
+
+event_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      user: "{{ env_var('POSTGRES_USER', 'pipeline') }}"
+      pass: "{{ env_var('POSTGRES_PASSWORD', 'pipeline123') }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'event_analytics') }}"
+      schema: gold
+      threads: 4
+      keepalives_idle: 0
+      connect_timeout: 10
+
+    prod:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'postgres') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      user: "{{ env_var('POSTGRES_USER', 'pipeline') }}"
+      pass: "{{ env_var('POSTGRES_PASSWORD', 'pipeline123') }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'event_analytics') }}"
+      schema: gold
+      threads: 4
+      keepalives_idle: 0
+      connect_timeout: 10

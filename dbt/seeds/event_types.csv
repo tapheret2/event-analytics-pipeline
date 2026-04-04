@@ -1,0 +1,7 @@
+event_type,description,is_revenue_event,funnel_order
+page_view,User viewed a page on the platform,false,1
+click,User clicked on a product or link,false,2
+add_to_cart,User added an item to their shopping cart,false,3
+purchase,User completed a purchase transaction,true,4
+cashback_earned,User received cashback reward for a purchase,false,5
+refund,User requested and received a refund,true,6

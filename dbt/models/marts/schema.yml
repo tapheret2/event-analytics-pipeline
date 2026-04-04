@@ -1,0 +1,105 @@
+version: 2
+
+models:
+  - name: fact_events
+    description: >
+      Core fact table containing enriched event data with derived time-based
+      and revenue dimensions. Materialized incrementally.
+    columns:
+      - name: event_id
+        description: "Unique event identifier"
+        data_tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: "User who triggered the event"
+        data_tests:
+          - not_null
+      - name: event_type
+        description: "Type of event"
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: [page_view, click, add_to_cart, purchase, cashback_earned, refund]
+      - name: event_date
+        description: "Date the event occurred"
+        data_tests:
+          - not_null
+      - name: revenue
+        description: "Revenue generated (positive for purchases, negative for refunds)"
+      - name: time_of_day
+        description: "Time period classification"
+        data_tests:
+          - accepted_values:
+              values: [morning, lunch, afternoon, evening, night]
+
+  - name: dim_users
+    description: >
+      User dimension table with behavioral segments, lifecycle stages,
+      and aggregated activity metrics.
+    columns:
+      - name: user_id
+        description: "Unique user identifier"
+        data_tests:
+          - unique
+          - not_null
+      - name: user_segment
+        description: "Behavioral segment classification"
+        data_tests:
+          - accepted_values:
+              values: [power_user, regular, casual_buyer, window_shopper, churned, new_user]
+      - name: lifecycle_stage
+        description: "User lifecycle classification"
+        data_tests:
+          - accepted_values:
+              values: [new, active, at_risk, dormant]
+
+  - name: daily_kpis
+    description: >
+      Pre-aggregated daily KPI metrics including DAU, WAU, revenue,
+      cashback, and conversion rates for fast dashboard queries.
+    columns:
+      - name: event_date
+        description: "Calendar date"
+        data_tests:
+          - unique
+          - not_null
+      - name: dau
+        description: "Daily Active Users"
+        data_tests:
+          - not_null
+      - name: daily_revenue
+        description: "Total revenue for the day"
+      - name: conversion_rate
+        description: "Purchase conversion rate (purchases / page_views %)"
+
+  - name: funnel_analysis
+    description: >
+      E-commerce conversion funnel showing progression from page_view
+      through to purchase with step-wise and overall conversion rates.
+    columns:
+      - name: stage_order
+        description: "Numeric order of funnel stage"
+        data_tests:
+          - not_null
+      - name: stage_name
+        description: "Name of the funnel stage"
+        data_tests:
+          - not_null
+      - name: overall_conversion_rate
+        description: "Conversion rate from top of funnel (%)"
+
+  - name: retention
+    description: >
+      Cohort-based user retention analysis. Users grouped by signup week,
+      tracked for return visits at Day 1, 3, 7, 14, and 30.
+    columns:
+      - name: cohort_week
+        description: "Week of user's first activity"
+        data_tests:
+          - unique
+          - not_null
+      - name: cohort_size
+        description: "Number of users in this cohort"
+        data_tests:
+          - not_null

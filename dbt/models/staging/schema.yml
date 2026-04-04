@@ -1,0 +1,56 @@
+version: 2
+
+sources:
+  - name: silver
+    description: "Silver layer - cleaned and validated event data"
+    schema: silver
+    tables:
+      - name: cleaned_events
+        description: "Cleaned event data from PySpark Silver transformation"
+        columns:
+          - name: event_id
+            description: "Unique event identifier"
+            data_tests:
+              - unique
+              - not_null
+          - name: user_id
+            description: "User identifier"
+            data_tests:
+              - not_null
+          - name: event_type
+            description: "Type of user event"
+            data_tests:
+              - not_null
+              - accepted_values:
+                  values:
+                    - page_view
+                    - click
+                    - add_to_cart
+                    - purchase
+                    - cashback_earned
+                    - refund
+          - name: event_timestamp
+            description: "Timestamp when event occurred"
+            data_tests:
+              - not_null
+
+models:
+  - name: stg_events
+    description: "Staging model for cleaned events - bridge from Silver to Gold"
+    columns:
+      - name: event_id
+        description: "Unique event identifier"
+        data_tests:
+          - unique
+          - not_null
+      - name: event_type
+        description: "Type of user event"
+        data_tests:
+          - accepted_values:
+              values:
+                - page_view
+                - click
+                - add_to_cart
+                - purchase
+                - cashback_earned
+                - refund

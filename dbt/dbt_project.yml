@@ -1,0 +1,58 @@
+# =============================================================================
+# dbt Project Configuration
+# =============================================================================
+
+name: "event_analytics"
+version: "1.0.0"
+config-version: 2
+
+profile: "event_analytics"
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# =============================================================================
+# Model Configurations
+# =============================================================================
+
+models:
+  event_analytics:
+    # Staging models (Silver → Gold bridge)
+    staging:
+      +materialized: view
+      +schema: gold
+      +tags: ["staging"]
+
+    # Mart models (Gold layer)
+    marts:
+      +materialized: table
+      +schema: gold
+      +tags: ["marts", "gold"]
+      +post-hook:
+        - "GRANT SELECT ON {{ this }} TO pipeline"
+
+# =============================================================================
+# Seed Configurations
+# =============================================================================
+
+seeds:
+  event_analytics:
+    +schema: gold
+
+# =============================================================================
+# Variables
+# =============================================================================
+
+vars:
+  # Lookback window for incremental models (days)
+  lookback_days: 3
+  # Minimum date for historical data
+  min_date: "2020-01-01"

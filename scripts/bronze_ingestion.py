@@ -88,6 +88,19 @@ def ingest_partition(
     if "event_date" in df.columns:
         df["event_date"] = pd.to_datetime(df["event_date"], errors="coerce").dt.date
 
+    # Drop rows that violate NOT NULL constraints (from intentional DQ issues)
+    required_cols = ["event_id", "user_id", "event_type", "event_timestamp", "event_date"]
+    existing_required = [c for c in required_cols if c in df.columns]
+    before_count = len(df)
+    df = df.dropna(subset=existing_required)
+    # Also drop rows with empty strings in required text columns
+    for col in ["event_id", "user_id", "event_type"]:
+        if col in df.columns:
+            df = df[df[col].astype(str).str.strip() != ""]
+    dropped = before_count - len(df)
+    if dropped > 0:
+        logger.warning(f"  ⚠️  Filtered out {dropped} rows with NULL/empty required fields")
+
     # Load into PostgreSQL bronze schema
     try:
         rows = df.to_sql(

@@ -1,0 +1,11 @@
+ bronze_count 
+--------------
+            0
+(1 row)
+
+ schemaname |   tablename    
+------------+----------------
+ bronze     | raw_events
+ silver     | cleaned_events
+(2 rows)
+

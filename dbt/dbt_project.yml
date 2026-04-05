@@ -28,13 +28,11 @@ models:
     # Staging models (Silver → Gold bridge)
     staging:
       +materialized: view
-      +schema: gold
       +tags: ["staging"]
 
     # Mart models (Gold layer)
     marts:
       +materialized: table
-      +schema: gold
       +tags: ["marts", "gold"]
       +post-hook:
         - "GRANT SELECT ON {{ this }} TO pipeline"
@@ -45,7 +43,6 @@ models:
 
 seeds:
   event_analytics:
-    +schema: gold
 
 # =============================================================================
 # Variables

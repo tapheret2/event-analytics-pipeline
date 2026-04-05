@@ -1,0 +1,5 @@
+NAME                         IMAGE                                        COMMAND                  SERVICE             CREATED        STATUS                    PORTS
+pipeline-airflow-scheduler   event-analytics-pipeline-airflow-scheduler   "/usr/bin/dumb-init …"   airflow-scheduler   11 hours ago   Up 11 hours (healthy)     8080/tcp
+pipeline-airflow-webserver   event-analytics-pipeline-airflow-webserver   "/usr/bin/dumb-init …"   airflow-webserver   11 hours ago   Up 11 hours (healthy)     0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp
+pipeline-postgres            postgres:16-alpine                           "docker-entrypoint.s…"   postgres            11 hours ago   Up 11 hours (healthy)     0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp
+pipeline-streamlit           event-analytics-pipeline-streamlit           "streamlit run app.p…"   streamlit           11 hours ago   Up 11 hours (unhealthy)   0.0.0.0:8501->8501/tcp, [::]:8501->8501/tcp

@@ -1,0 +1,3 @@
+ERROR:  relation "gold.fact_events" does not exist
+LINE 1: ...NION ALL SELECT 'gold.fact_events', COUNT(*) FROM gold.fact_...
+                                                             ^

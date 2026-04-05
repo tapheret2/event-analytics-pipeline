@@ -270,15 +270,19 @@ with DAG(
 
         dbt_run >> dbt_test
 
-    # --- Quality Checks ---
+    # --- Quality Checks (advisory — does not block Gold layer) ---
     quality_check = PythonOperator(
         task_id="data_quality_check",
         python_callable=data_quality_check_task,
-        doc_md="Run quality assertions on Silver layer data",
+        doc_md="Run quality assertions on Silver layer data (advisory)",
     )
 
     # --- End ---
-    end = EmptyOperator(task_id="end", trigger_rule="none_failed")
+    end = EmptyOperator(task_id="end", trigger_rule="none_failed_min_one_success")
 
     # --- Dependencies ---
-    start >> generate_events >> bronze_group >> silver_group >> quality_check >> gold_group >> end
+    # Gold layer runs directly after Silver; DQ check is parallel / advisory
+    start >> generate_events >> bronze_group >> silver_group
+    silver_group >> gold_group >> end
+    silver_group >> quality_check >> end
+

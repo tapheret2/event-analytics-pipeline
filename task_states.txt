@@ -1,0 +1,11 @@
+dag_id                   | execution_date            | task_id                       | state           | start_date                       | end_date                        
+=========================+===========================+===============================+=================+==================================+=================================
+event_analytics_pipeline | 2026-04-04T02:00:00+00:00 | end                           | upstream_failed | 2026-04-05T03:22:37.021825+00:00 | 2026-04-05T03:22:37.021825+00:00
+event_analytics_pipeline | 2026-04-04T02:00:00+00:00 | data_quality_check            | failed          | 2026-04-05T03:22:34.259961+00:00 | 2026-04-05T03:22:35.035051+00:00
+event_analytics_pipeline | 2026-04-04T02:00:00+00:00 | gold_layer.dbt_run            | upstream_failed | 2026-04-05T03:22:35.185372+00:00 | 2026-04-05T03:22:35.185372+00:00
+event_analytics_pipeline | 2026-04-04T02:00:00+00:00 | gold_layer.dbt_test           | upstream_failed | 2026-04-05T03:22:36.327871+00:00 | 2026-04-05T03:22:36.327871+00:00
+event_analytics_pipeline | 2026-04-04T02:00:00+00:00 | start                         | success         | 2026-04-05T03:11:55.975831+00:00 | 2026-04-05T03:11:55.975842+00:00
+event_analytics_pipeline | 2026-04-04T02:00:00+00:00 | generate_events               | success         | 2026-04-05T03:11:59.280076+00:00 | 2026-04-05T03:12:02.227369+00:00
+event_analytics_pipeline | 2026-04-04T02:00:00+00:00 | bronze_layer.bronze_ingestion | success         | 2026-04-05T03:12:03.410626+00:00 | 2026-04-05T03:12:07.263813+00:00
+event_analytics_pipeline | 2026-04-04T02:00:00+00:00 | silver_layer.silver_transform | success         | 2026-04-05T03:12:08.732862+00:00 | 2026-04-05T03:12:26.704800+00:00
+                                                                                                                                                                            

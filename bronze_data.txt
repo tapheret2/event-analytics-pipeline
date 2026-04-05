@@ -1,0 +1,9 @@
+ total_bronze_rows 
+-------------------
+                 0
+(1 row)
+
+ event_date 
+------------
+(0 rows)
+

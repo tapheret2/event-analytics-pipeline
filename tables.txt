@@ -1,0 +1,6 @@
+           List of relations
+ Schema |    Name    | Type  |  Owner   
+--------+------------+-------+----------
+ bronze | raw_events | table | pipeline
+(1 row)
+

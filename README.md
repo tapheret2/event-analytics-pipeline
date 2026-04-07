@@ -516,24 +516,6 @@ The pipeline handles the same fundamental challenges:
 - KPI calculation and reporting
 - Data quality monitoring
 
----
-
-## 🤖 AI-Assisted Development
-
-This project was built with the assistance of AI coding tools:
-
-- **Claude (Anthropic)**: Architecture design, code generation, documentation
-- **Cursor IDE**: AI-powered code completion and refactoring
-
-### How AI Was Used Responsibly
-
-1. **Architecture & Design**: AI helped evaluate trade-offs between different approaches
-2. **Boilerplate Generation**: Repetitive code patterns were generated, then customized
-3. **Documentation**: Initial drafts were AI-generated, then refined with domain knowledge
-4. **Code Review**: AI provided suggestions, but all code was manually reviewed and tested
-5. **Learning**: Used AI as an interactive tutor for unfamiliar tools and patterns
-
-> ⚠️ **Important**: While AI accelerated development significantly, every line of code was understood, tested, and verified. AI is a tool that amplifies capability — it doesn't replace engineering judgment.
 
 ---
 

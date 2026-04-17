@@ -1,35 +1,40 @@
-# Bybit Demo Memecoin Bot (OpenClaw workspace)
+# Bybit Demo Bot
 
-This is a **demo-only** trading bot scaffold for Bybit Unified Trading (V5) using `pybit`.
-
-## Safety
-- Create a Bybit API key with **Read + Trade only**.
-- **Disable withdrawals**.
-- Prefer **IP whitelist**.
-- Run in **DEMO** first.
-
-## Setup
-Set env vars (PowerShell):
-```powershell
-setx BYBIT_API_KEY "..."
-setx BYBIT_API_SECRET "..."
-setx BYBIT_DEMO "true"
-```
-Re-open terminal after `setx`.
+Demo bot for Bybit Unified Trading (V5) using `pybit`.
 
 ## Run
-```powershell
-cd "C:\Users\ADMIN\.openclaw\workspace\projects\bybit-demo-bot"
-python .\bot.py
+```bash
+cd /root/.openclaw/workspace/projects/bybit-demo-bot
+source /root/.venvs/bybit-bot/bin/activate
+python bot.py
 ```
 
-## What it does
-- Picks a liquid, high-volatility **USDT perpetual** symbol (excluding majors).
-- Trend filter on **15m EMA(50/200)**
-- Entry trigger on **1m RSI**
-- Cooldown: max **1 entry per 15 minutes**
-- One position at a time
-- Sets leverage (default 50x)
-- Sets TP/SL immediately using `set_trading_stop`
+## Main behavior
+- Uses EMA + RSI + ADX signal from **closed candle** only.
+- Blocks overtrading with:
+  - `MIN_ENTRY_INTERVAL_SECONDS`
+  - `MAX_TRADES_PER_DAY`
+  - `LOSS_COOLDOWN_SECONDS`
+- Risk sizing by `MAX_RISK_PCT` and `MAX_POSITION_PCT`.
+- Auto TP/SL + ATR trailing stop.
+- Daily protection: max loss, max drawdown, max consecutive losses, daily target stop.
 
-> No profit guarantees. This is a testing harness.
+## Tune quickly (`config.env`)
+- Signal quality:
+  - `MIN_ADX`, `MIN_EMA_GAP_PCT`
+  - `RSI_LONG_FLOOR`, `RSI_LONG_CEILING`
+  - `RSI_SHORT_FLOOR`, `RSI_SHORT_CEILING`
+- Risk:
+  - `MAX_RISK_PCT`, `MAX_POSITION_PCT`
+  - `MAX_DAILY_LOSS_PCT`, `MAX_DRAWDOWN_PCT`
+- Trading pace:
+  - `MIN_ENTRY_INTERVAL_SECONDS`, `MAX_TRADES_PER_DAY`, `LOSS_COOLDOWN_SECONDS`
+
+## Ops
+```bash
+systemctl status bybit-demo-bot --no-pager
+journalctl -u bybit-demo-bot -n 100 --no-pager
+tail -f /root/.openclaw/workspace/projects/bybit-demo-bot/bot_v2_runtime.log
+```
+
+Use demo keys first. Do not enable withdrawals on API key.

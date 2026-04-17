@@ -73,17 +73,25 @@ class BotConfig:
     atr_tp_mult: float = 4.0
     trailing_stop_atr: float = 2.0
     trailing_step_atr: float = 1.0
+    min_trail_update_ticks: int = 5
     max_daily_loss_pct: float = 4.0
     max_consecutive_losses: int = 2
     daily_target_pct: float = 1.2
     max_drawdown_pct: float = 15.0
+    max_trades_per_day: int = 6
+    min_entry_interval_seconds: int = 900
+    loss_cooldown_seconds: int = 3600
 
     ema_fast: int = 20
     ema_slow: int = 50
     rsi_len: int = 14
     atr_len: int = 14
     adx_len: int = 14
+    min_adx: float = 22.0
+    min_ema_gap_pct: float = 0.08
     rsi_long_floor: float = 52.0
+    rsi_long_ceiling: float = 72.0
+    rsi_short_floor: float = 28.0
     rsi_short_ceiling: float = 48.0
 
     dashboard_host: str = "0.0.0.0"
@@ -112,10 +120,20 @@ def load_config() -> BotConfig:
         atr_tp_mult=env_float("ATR_TP_MULT", 4.0),
         trailing_stop_atr=env_float("TRAILING_STOP_ATR", 2.0),
         trailing_step_atr=env_float("TRAILING_STEP_ATR", 1.0),
+        min_trail_update_ticks=env_int("MIN_TRAIL_UPDATE_TICKS", 5),
         max_daily_loss_pct=env_float("MAX_DAILY_LOSS_PCT", 4.0),
         max_consecutive_losses=env_int("MAX_CONSECUTIVE_LOSSES", 2),
         daily_target_pct=env_float("DAILY_TARGET_PCT", 1.2),
         max_drawdown_pct=env_float("MAX_DRAWDOWN_PCT", 15.0),
+        max_trades_per_day=env_int("MAX_TRADES_PER_DAY", 6),
+        min_entry_interval_seconds=env_int("MIN_ENTRY_INTERVAL_SECONDS", 900),
+        loss_cooldown_seconds=env_int("LOSS_COOLDOWN_SECONDS", 3600),
+        min_adx=env_float("MIN_ADX", 22.0),
+        min_ema_gap_pct=env_float("MIN_EMA_GAP_PCT", 0.08),
+        rsi_long_floor=env_float("RSI_LONG_FLOOR", 52.0),
+        rsi_long_ceiling=env_float("RSI_LONG_CEILING", 72.0),
+        rsi_short_floor=env_float("RSI_SHORT_FLOOR", 28.0),
+        rsi_short_ceiling=env_float("RSI_SHORT_CEILING", 48.0),
         dashboard_host=get_env("DASHBOARD_HOST", "0.0.0.0") or "0.0.0.0",
         dashboard_port=env_int("DASHBOARD_PORT", 8000),
     )
@@ -400,22 +418,43 @@ def set_trading_stop(session: HTTP, cfg: BotConfig, symbol: str, take_profit: fl
 # ----------------------------
 
 
-def build_signal(cfg: BotConfig, highs: list[float], lows: list[float], closes: list[float]) -> dict[str, Any]:
+def build_signal(
+    cfg: BotConfig,
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    *,
+    signal_idx: int = -2,
+) -> dict[str, Any]:
     ema_fast = ema(closes, cfg.ema_fast)
     ema_slow = ema(closes, cfg.ema_slow)
     rsi_vals = rsi(closes, cfg.rsi_len)
     atr_vals = atr(highs, lows, closes, cfg.atr_len)
     adx_vals = adx(highs, lows, closes, cfg.adx_len)
 
-    last = closes[-1]
-    fast = ema_fast[-1]
-    slow = ema_slow[-1]
-    r = rsi_vals[-1]
-    a = atr_vals[-1]
-    adx_now = adx_vals[-1]
+    idx = signal_idx if abs(signal_idx) <= len(closes) else -1
+    last = closes[idx]
+    fast = ema_fast[idx]
+    slow = ema_slow[idx]
+    r = rsi_vals[idx]
+    a = atr_vals[idx]
+    adx_now = adx_vals[idx]
+    ema_gap_pct = (abs(fast - slow) / last * 100.0) if last > 0 else 0.0
 
-    long_ok = fast > slow and r >= cfg.rsi_long_floor and adx_now >= 18
-    short_ok = fast < slow and r <= cfg.rsi_short_ceiling and adx_now >= 18
+    long_ok = (
+        fast > slow
+        and r >= cfg.rsi_long_floor
+        and r <= cfg.rsi_long_ceiling
+        and adx_now >= cfg.min_adx
+        and ema_gap_pct >= cfg.min_ema_gap_pct
+    )
+    short_ok = (
+        fast < slow
+        and r <= cfg.rsi_short_ceiling
+        and r >= cfg.rsi_short_floor
+        and adx_now >= cfg.min_adx
+        and ema_gap_pct >= cfg.min_ema_gap_pct
+    )
 
     if long_ok and not short_ok:
         side = "Buy"
@@ -432,6 +471,7 @@ def build_signal(cfg: BotConfig, highs: list[float], lows: list[float], closes: 
         "rsi": r,
         "atr": a,
         "adx": adx_now,
+        "ema_gap_pct": ema_gap_pct,
     }
 
 
@@ -503,12 +543,15 @@ DEFAULT_STATE: dict[str, Any] = {
     "start_equity": 0.0,
     "peak_equity": 0.0,
     "daily_realized_pnl": 0.0,
+    "daily_trade_count": 0,
     "consecutive_losses": 0,
     "paused": False,
     "pause_reason": "",
     "last_signal": None,
     "last_loop_ts": 0,
     "last_entry_ts": 0,
+    "last_entry_candle_ts": 0,
+    "cooldown_until_ts": 0,
     "open_trade": None,
     "trade_seq": 0,
 }
@@ -549,6 +592,7 @@ def reset_day_if_needed(state: dict[str, Any], equity: float):
         state["start_equity"] = equity
         state["peak_equity"] = equity
         state["daily_realized_pnl"] = 0.0
+        state["daily_trade_count"] = 0
         state["consecutive_losses"] = 0
         state["paused"] = False
         state["pause_reason"] = ""
@@ -578,7 +622,7 @@ def sync_open_trade_from_exchange(state: dict[str, Any], position: dict[str, Any
         state["open_trade"] = None
 
 
-def evaluate_closed_trade(state: dict[str, Any], equity: float):
+def evaluate_closed_trade(state: dict[str, Any], equity: float, cfg: BotConfig):
     open_trade = state.get("open_trade")
     if not open_trade:
         return
@@ -593,8 +637,10 @@ def evaluate_closed_trade(state: dict[str, Any], equity: float):
     state["daily_realized_pnl"] = pnl_equity
     if pnl_trade < 0:
         state["consecutive_losses"] = int(state.get("consecutive_losses", 0) or 0) + 1
+        state["cooldown_until_ts"] = utc_ts() + max(0, cfg.loss_cooldown_seconds)
     else:
         state["consecutive_losses"] = 0
+        state["cooldown_until_ts"] = int(state.get("cooldown_until_ts") or 0)
 
     log_trade({
         "ts": now_iso(),
@@ -621,6 +667,16 @@ def main():
         f"bot_start symbol={cfg.symbol} tf={cfg.timeframe} demo={cfg.demo} testnet={cfg.testnet} leverage={cfg.leverage} "
         f"risk={cfg.max_risk_pct}% max_position={cfg.max_position_pct}%"
     )
+    actual_leverage = cfg.leverage
+    try:
+        startup_filters = get_instrument_filters(session, cfg.category, cfg.symbol)
+        actual_leverage = set_leverage(session, cfg, cfg.symbol, startup_filters.get("max_leverage", cfg.leverage))
+        log_runtime(f"leverage_set value={actual_leverage}")
+    except Exception as e:
+        if "110043" in str(e):
+            log_runtime(f"leverage_unchanged keep={actual_leverage}")
+        else:
+            log_runtime(f"WARN set_leverage_failed err={e}")
     log_runtime(f"dashboard_config host={cfg.dashboard_host} port={cfg.dashboard_port} (dashboard wiring pending)")
 
     while True:
@@ -631,15 +687,11 @@ def main():
             state["peak_equity"] = max(float(state.get("peak_equity") or 0.0), equity)
 
             filters = get_instrument_filters(session, cfg.category, cfg.symbol)
-            try:
-                actual_leverage = set_leverage(session, cfg, cfg.symbol, filters.get("max_leverage", cfg.leverage))
-            except Exception as e:
-                actual_leverage = max(1, min(cfg.leverage, int(filters.get("max_leverage") or cfg.leverage)))
-                log_runtime(f"WARN set_leverage_failed err={e}")
 
             rows = get_klines(session, cfg.category, cfg.symbol, cfg.timeframe, limit=max(cfg.ema_slow + cfg.adx_len + 50, 220))
             highs, lows, closes, _volumes = parse_ohlc(rows)
-            signal = build_signal(cfg, highs, lows, closes)
+            signal = build_signal(cfg, highs, lows, closes, signal_idx=-2)
+            signal_candle_ts = int(float(rows[-2][0])) if len(rows) >= 2 else 0
             ticker = get_ticker(session, cfg.category, cfg.symbol)
             last_price = safe_float(ticker.get("lastPrice"), signal["price"])
             position = get_position(session, cfg.category, cfg.symbol)
@@ -653,14 +705,18 @@ def main():
                 "rsi": signal["rsi"],
                 "atr": signal["atr"],
                 "adx": signal["adx"],
+                "ema_gap_pct": signal["ema_gap_pct"],
+                "signal_candle_ts": signal_candle_ts,
             }
             sync_open_trade_from_exchange(state, position)
 
             if position is None and state.get("open_trade"):
-                evaluate_closed_trade(state, equity)
+                evaluate_closed_trade(state, equity, cfg)
 
             daily_pnl_pct = pnl_pct_from_equity(float(state.get("start_equity") or equity), equity)
             drawdown_pct = pnl_pct_from_equity(float(state.get("peak_equity") or equity), equity)
+            cooldown_until_ts = int(state.get("cooldown_until_ts") or 0)
+            in_cooldown = utc_ts() < cooldown_until_ts
 
             pause_reason = ""
             if daily_pnl_pct <= -cfg.max_daily_loss_pct:
@@ -671,6 +727,8 @@ def main():
                 pause_reason = f"drawdown {drawdown_pct:.2f}% <= -{cfg.max_drawdown_pct}%"
             elif daily_pnl_pct >= cfg.daily_target_pct:
                 pause_reason = f"daily target hit {daily_pnl_pct:.2f}% >= {cfg.daily_target_pct}%"
+            elif int(state.get("daily_trade_count") or 0) >= cfg.max_trades_per_day:
+                pause_reason = f"daily trade cap reached {state['daily_trade_count']} >= {cfg.max_trades_per_day}"
 
             state["paused"] = bool(pause_reason)
             state["pause_reason"] = pause_reason
@@ -686,19 +744,25 @@ def main():
                 open_trade["entry_price"] = avg_price
 
                 move = (best_price - avg_price) if side == "Buy" else (avg_price - best_price)
-                trigger = atr_now * cfg.trailing_stop_atr
+                trigger = atr_now * cfg.trailing_step_atr
                 if atr_now > 0 and move >= trigger:
                     if side == "Buy":
-                        new_sl = avg_price + (atr_now * cfg.trailing_step_atr)
+                        new_sl = best_price - (atr_now * cfg.trailing_stop_atr)
                     else:
-                        new_sl = avg_price - (atr_now * cfg.trailing_step_atr)
+                        new_sl = best_price + (atr_now * cfg.trailing_stop_atr)
 
                     current_sl = safe_float(position.get("stopLoss") or open_trade.get("stop_loss"))
-                    should_update = (side == "Buy" and new_sl > current_sl) or (side == "Sell" and (current_sl == 0 or new_sl < current_sl))
+                    tick_size = filters.get("tick_size", 0.0)
+                    min_update = tick_size * max(1, cfg.min_trail_update_ticks)
+                    sl_delta = abs(new_sl - current_sl)
+                    should_update = (
+                        ((side == "Buy" and new_sl > current_sl) or (side == "Sell" and (current_sl == 0 or new_sl < current_sl)))
+                        and (min_update <= 0 or sl_delta >= min_update)
+                    )
                     if should_update:
                         tp = safe_float(position.get("takeProfit") or open_trade.get("take_profit"))
                         try:
-                            set_trading_stop(session, cfg, cfg.symbol, tp, new_sl, tick_size=filters.get("tick_size", 0.0))
+                            set_trading_stop(session, cfg, cfg.symbol, tp, new_sl, tick_size=tick_size)
                             open_trade["stop_loss"] = new_sl
                             open_trade["trail_stage"] = int(open_trade.get("trail_stage") or 0) + 1
                             log_runtime(f"trail_update side={side} new_sl={new_sl:.2f} price={last_price:.2f}")
@@ -706,13 +770,16 @@ def main():
                             log_runtime(f"WARN trail_update_failed err={e}")
                 state["open_trade"] = open_trade
             else:
-                if not state["paused"] and signal["side"] in {"Buy", "Sell"}:
+                now_ts = utc_ts()
+                can_trade_interval = now_ts - int(state.get("last_entry_ts") or 0) >= cfg.min_entry_interval_seconds
+                same_candle = signal_candle_ts == int(state.get("last_entry_candle_ts") or 0)
+                if not state["paused"] and not in_cooldown and signal["side"] in {"Buy", "Sell"} and can_trade_interval and not same_candle:
                     take_profit, stop_loss = compute_exit_prices(cfg, signal["side"], last_price, float(signal["atr"]))
                     qty = compute_qty(cfg, equity, last_price, stop_loss, actual_leverage, filters)
                     if qty > 0:
                         log_runtime(
                             f"entry_signal side={signal['side']} price={last_price:.2f} qty={qty:.6f} sl={stop_loss:.2f} tp={take_profit:.2f} "
-                            f"rsi={signal['rsi']:.2f} adx={signal['adx']:.2f}"
+                            f"rsi={signal['rsi']:.2f} adx={signal['adx']:.2f} ema_gap={signal['ema_gap_pct']:.3f}%"
                         )
                         order = place_market_order(session, cfg, cfg.symbol, signal["side"], qty)
                         time.sleep(2)
@@ -725,7 +792,9 @@ def main():
 
                         state["trade_seq"] = int(state.get("trade_seq") or 0) + 1
                         trade_id = f"{utc_day()}-{state['trade_seq']}"
-                        state["last_entry_ts"] = utc_ts()
+                        state["last_entry_ts"] = now_ts
+                        state["last_entry_candle_ts"] = signal_candle_ts
+                        state["daily_trade_count"] = int(state.get("daily_trade_count") or 0) + 1
                         state["open_trade"] = {
                             "trade_id": trade_id,
                             "side": signal["side"],
@@ -756,10 +825,19 @@ def main():
                         log_runtime("skip_entry qty<=0 after sizing")
                 elif state["paused"]:
                     log_runtime(f"paused reason={state['pause_reason']}")
+                elif in_cooldown:
+                    cooldown_left = max(0, cooldown_until_ts - utc_ts())
+                    log_runtime(f"cooldown active remaining={cooldown_left}s")
+                elif same_candle:
+                    log_runtime(f"skip_entry same_signal_candle ts={signal_candle_ts}")
+                elif not can_trade_interval:
+                    wait_left = max(0, cfg.min_entry_interval_seconds - (now_ts - int(state.get('last_entry_ts') or 0)))
+                    log_runtime(f"skip_entry interval_guard remaining={wait_left}s")
                 else:
                     log_runtime(
                         f"no_entry signal={signal['side']} price={last_price:.2f} ema_fast={signal['ema_fast']:.2f} "
-                        f"ema_slow={signal['ema_slow']:.2f} rsi={signal['rsi']:.2f} adx={signal['adx']:.2f}"
+                        f"ema_slow={signal['ema_slow']:.2f} rsi={signal['rsi']:.2f} adx={signal['adx']:.2f} "
+                        f"ema_gap={signal['ema_gap_pct']:.3f}%"
                     )
 
             state["last_loop_ts"] = utc_ts()

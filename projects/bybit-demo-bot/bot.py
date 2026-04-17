@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import math
 import os
+import sqlite3
 import sys
 import time
+from hashlib import sha256
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -535,6 +537,7 @@ def pnl_pct_from_equity(start_equity: float, equity: float) -> float:
 BASE_DIR = Path(__file__).resolve().parent
 STATE_PATH = BASE_DIR / "state_v2.json"
 TRADE_LOG_PATH = BASE_DIR / "trades_v2.log.jsonl"
+TRADE_DB_PATH = BASE_DIR / "trades_v2.db"
 RUNTIME_LOG_PATH = BASE_DIR / "bot_v2_runtime.log"
 
 
@@ -580,9 +583,123 @@ def log_runtime(message: str):
         f.write(line + "\n")
 
 
+def init_trade_db():
+    with sqlite3.connect(TRADE_DB_PATH) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trade_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_ts TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                trade_id TEXT,
+                side TEXT,
+                symbol TEXT,
+                qty REAL,
+                entry_price REAL,
+                stop_loss REAL,
+                take_profit REAL,
+                trail_stage INTEGER,
+                realized_pnl_est REAL,
+                equity REAL,
+                payload_json TEXT NOT NULL,
+                payload_hash TEXT NOT NULL UNIQUE
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_events_ts ON trade_events(event_ts)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_events_type ON trade_events(event_type)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_events_trade_id ON trade_events(trade_id)")
+
+
+def _as_float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _as_int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _insert_trade_event(conn: sqlite3.Connection, event: dict[str, Any]) -> int:
+    trade = event.get("trade") if isinstance(event.get("trade"), dict) else {}
+    trade_id = event.get("trade_id") or trade.get("trade_id")
+    side = event.get("side") or trade.get("side")
+    symbol = event.get("symbol")
+    qty = _as_float_or_none(event.get("qty") if event.get("qty") is not None else trade.get("qty"))
+    entry_price = _as_float_or_none(event.get("entry_price") if event.get("entry_price") is not None else trade.get("entry_price"))
+    stop_loss = _as_float_or_none(event.get("stop_loss") if event.get("stop_loss") is not None else trade.get("stop_loss"))
+    take_profit = _as_float_or_none(event.get("take_profit") if event.get("take_profit") is not None else trade.get("take_profit"))
+    trail_stage = _as_int_or_none(trade.get("trail_stage"))
+    realized_pnl_est = _as_float_or_none(event.get("realized_pnl_est"))
+    equity = _as_float_or_none(event.get("equity"))
+
+    payload_json = json.dumps(event, ensure_ascii=False, sort_keys=True)
+    payload_hash = sha256(payload_json.encode("utf-8")).hexdigest()
+    before = conn.total_changes
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO trade_events (
+            event_ts, event_type, trade_id, side, symbol, qty, entry_price,
+            stop_loss, take_profit, trail_stage, realized_pnl_est, equity,
+            payload_json, payload_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event.get("ts"),
+            event.get("event"),
+            trade_id,
+            side,
+            symbol,
+            qty,
+            entry_price,
+            stop_loss,
+            take_profit,
+            trail_stage,
+            realized_pnl_est,
+            equity,
+            payload_json,
+            payload_hash,
+        ),
+    )
+    return conn.total_changes - before
+
+
+def write_trade_event_sqlite(event: dict[str, Any]) -> int:
+    with sqlite3.connect(TRADE_DB_PATH) as conn:
+        return _insert_trade_event(conn, event)
+
+
+def backfill_trade_db_from_jsonl() -> int:
+    if not TRADE_LOG_PATH.exists():
+        return 0
+    inserted = 0
+    with sqlite3.connect(TRADE_DB_PATH) as conn:
+        for line in TRADE_LOG_PATH.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(event, dict):
+                continue
+            inserted += _insert_trade_event(conn, event)
+    return inserted
+
+
 def log_trade(event: dict[str, Any]):
     with TRADE_LOG_PATH.open("a", encoding="utf-8") as f:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    try:
+        write_trade_event_sqlite(event)
+    except Exception as e:
+        log_runtime(f"WARN trade_db_write_failed err={e}")
 
 
 def reset_day_if_needed(state: dict[str, Any], equity: float):
@@ -637,10 +754,13 @@ def evaluate_closed_trade(state: dict[str, Any], equity: float, cfg: BotConfig):
     state["daily_realized_pnl"] = pnl_equity
     if pnl_trade < 0:
         state["consecutive_losses"] = int(state.get("consecutive_losses", 0) or 0) + 1
-        state["cooldown_until_ts"] = utc_ts() + max(0, cfg.loss_cooldown_seconds)
+        if int(state.get("consecutive_losses") or 0) >= cfg.max_consecutive_losses:
+            state["cooldown_until_ts"] = utc_ts() + max(0, cfg.loss_cooldown_seconds)
+            state["consecutive_losses"] = 0
+            log_runtime(f"loss_cooldown_armed seconds={cfg.loss_cooldown_seconds}")
     else:
         state["consecutive_losses"] = 0
-        state["cooldown_until_ts"] = int(state.get("cooldown_until_ts") or 0)
+        state["cooldown_until_ts"] = 0
 
     log_trade({
         "ts": now_iso(),
@@ -667,6 +787,13 @@ def main():
         f"bot_start symbol={cfg.symbol} tf={cfg.timeframe} demo={cfg.demo} testnet={cfg.testnet} leverage={cfg.leverage} "
         f"risk={cfg.max_risk_pct}% max_position={cfg.max_position_pct}%"
     )
+    try:
+        init_trade_db()
+        backfilled = backfill_trade_db_from_jsonl()
+        log_runtime(f"trade_db_ready path={TRADE_DB_PATH.name} backfilled={backfilled}")
+    except Exception as e:
+        log_runtime(f"WARN trade_db_init_failed err={e}")
+
     actual_leverage = cfg.leverage
     try:
         startup_filters = get_instrument_filters(session, cfg.category, cfg.symbol)
@@ -721,8 +848,6 @@ def main():
             pause_reason = ""
             if daily_pnl_pct <= -cfg.max_daily_loss_pct:
                 pause_reason = f"daily loss {daily_pnl_pct:.2f}% <= -{cfg.max_daily_loss_pct}%"
-            elif int(state.get("consecutive_losses") or 0) >= cfg.max_consecutive_losses:
-                pause_reason = f"consecutive losses >= {cfg.max_consecutive_losses}"
             elif drawdown_pct <= -cfg.max_drawdown_pct:
                 pause_reason = f"drawdown {drawdown_pct:.2f}% <= -{cfg.max_drawdown_pct}%"
             elif daily_pnl_pct >= cfg.daily_target_pct:

@@ -19,7 +19,11 @@ python bot.py
   - `LOSS_COOLDOWN_SECONDS`
 - Risk sizing by `MAX_RISK_PCT` and `MAX_POSITION_PCT`.
 - Auto TP/SL + ATR trailing stop.
-- Daily protection: max loss, max drawdown, max consecutive losses, daily target stop.
+- Loss streak now triggers temporary cooldown (auto-resume), not day-long hard pause.
+- Daily protection: max loss, max drawdown, daily target stop.
+- Trade events are persisted to both:
+  - JSONL: `trades_v2.log.jsonl`
+  - SQLite: `trades_v2.db` (`trade_events` table)
 
 ## Tune quickly (`config.env`)
 - Signal quality:
@@ -37,6 +41,7 @@ python bot.py
 systemctl status bybit-demo-bot --no-pager
 journalctl -u bybit-demo-bot -n 100 --no-pager
 tail -f /root/.openclaw/workspace/projects/bybit-demo-bot/bot_v2_runtime.log
+sqlite3 /root/.openclaw/workspace/projects/bybit-demo-bot/trades_v2.db "SELECT event_type, COUNT(*) FROM trade_events GROUP BY event_type;"
 ```
 
 Use demo keys first. Do not enable withdrawals on API key.

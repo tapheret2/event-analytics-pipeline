@@ -9,6 +9,8 @@ source /root/.venvs/bybit-bot/bin/activate
 python bot.py
 ```
 
+`bybit-demo-bot.service` loads `/root/.openclaw/workspace/.env` first, then `projects/bybit-demo-bot/config.env` to override bot parameters.
+
 ## Main behavior
 - Uses EMA + RSI + ADX signal from **closed candle** only.
 - Blocks overtrading with:
